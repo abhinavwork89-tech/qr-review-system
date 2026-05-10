@@ -1,4 +1,7 @@
+"use client";
+
 import Image from "next/image";
+import { useState } from "react";
 
 export function BusinessBrandHeader({
   name,
@@ -7,19 +10,23 @@ export function BusinessBrandHeader({
   name: string;
   logoUrl: string | null;
 }) {
+  const [logoFailed, setLogoFailed] = useState(false);
+  const showLogo = Boolean(logoUrl?.trim()) && !logoFailed;
+
   return (
     <header className="border-b border-[color-mix(in_srgb,var(--review-fg)_10%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_88%,var(--review-primary)_4%)]">
       <div className="mx-auto flex max-w-lg items-center gap-3 px-4 py-4 sm:gap-4 sm:px-5 sm:py-5">
-        {logoUrl ? (
+        {showLogo ? (
           <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-xl bg-white/80 shadow-sm ring-1 ring-[color-mix(in_srgb,var(--review-fg)_8%,transparent)] sm:h-14 sm:w-14">
             <Image
-              src={logoUrl}
+              src={logoUrl!}
               alt={name}
               fill
               className="object-contain p-1.5"
               sizes="(max-width: 640px) 48px, 56px"
               priority
               unoptimized
+              onError={() => setLogoFailed(true)}
             />
           </div>
         ) : (

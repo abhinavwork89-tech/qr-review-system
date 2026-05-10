@@ -1,15 +1,26 @@
 import Link from "next/link";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { normalizeBusinessStatus, type BusinessStatus } from "@/lib/business/status";
 import { DeleteBusinessButton } from "@/components/admin/business/delete-business-button";
+import { BusinessListFilters } from "@/components/admin/business/business-list-filters";
+import { BusinessStatusToggleButton } from "@/components/admin/business/business-status-toggle-button";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
+import {
+  mergeBusinessTypeCatalogWithInUseSlugs,
+  resolveBusinessTypeDisplayName,
+} from "@/lib/admin/business-type-display";
+import { listBusinessTypeSelectOptions } from "@/lib/data/business-types-admin";
 
 type BusinessRecord = {
   id: string;
   slug: string | null;
   brand_name: string | null;
   name: string | null;
+  mobile: string | null;
   email: string | null;
   plan_type: string | null;
+  business_type: string | null;
+  status: BusinessStatus;
   is_active: boolean | null;
   created_at: string | null;
 };
@@ -20,6 +31,24 @@ export default async function BusinessListPage({
   searchParams?: Promise<Record<string, string | string[] | undefined>>;
 }) {
   const query = (await searchParams) ?? {};
+  const statusFilterRaw = query.status;
+  const statusFilter =
+    statusFilterRaw === "active" || statusFilterRaw === "inactive"
+      ? statusFilterRaw
+      : Array.isArray(statusFilterRaw) && (statusFilterRaw.includes("active") || statusFilterRaw.includes("inactive"))
+        ? (statusFilterRaw.find((v) => v === "active" || v === "inactive") as "active" | "inactive")
+        : "all";
+  const planRaw = query.plan;
+  const planFilter = Array.isArray(planRaw) ? planRaw[0] ?? "all" : planRaw ?? "all";
+  const businessTypeRaw = query.businessType;
+  const businessTypeFilter = Array.isArray(businessTypeRaw)
+    ? businessTypeRaw[0] ?? "all"
+    : businessTypeRaw ?? "all";
+  const pageRaw = Array.isArray(query.page) ? query.page[0] : query.page;
+  const page = Math.max(1, Number.parseInt(pageRaw ?? "1", 10) || 1);
+  const pageSize = 10;
+  const from = (page - 1) * pageSize;
+  const to = from + pageSize - 1;
   const deletedFlag = query.deleted;
   const deleted =
     deletedFlag === "1" ||
@@ -27,21 +56,63 @@ export default async function BusinessListPage({
     (Array.isArray(deletedFlag) && deletedFlag.includes("1"));
 
   const supabase = createServiceRoleClient();
-  const { data, error } = await supabase
+  const businessTypesInUsePromise = supabase
     .from("businesses")
-    .select("*")
+    .select("business_type")
+    .not("business_type", "is", null);
+  let listQuery = supabase
+    .from("businesses")
+    .select(
+      "id,slug,brand_name,name,mobile,email,plan_type,business_type,status,is_active,created_at",
+      { count: "exact" },
+    )
+    .or("status.is.null,status.neq.deleted")
     .order("created_at", { ascending: false });
+
+  if (planFilter !== "all") {
+    listQuery = listQuery.eq("plan_type", planFilter);
+  }
+  if (businessTypeFilter !== "all") {
+    listQuery = listQuery.eq("business_type", businessTypeFilter);
+  }
+  if (statusFilter === "active") {
+    listQuery = listQuery.or("status.eq.active,and(status.is.null,is_active.eq.true)");
+  } else if (statusFilter === "inactive") {
+    listQuery = listQuery.or("status.eq.inactive,and(status.is.null,is_active.eq.false)");
+  }
+  listQuery = listQuery.range(from, to);
+
+  const [{ data, error, count }, catalogResult, { data: businessTypesInUseData }] =
+    await Promise.all([listQuery, listBusinessTypeSelectOptions(), businessTypesInUsePromise]);
 
   const rows: BusinessRecord[] = ((data ?? []) as Record<string, unknown>[]).map((r) => ({
     id: String(r.id ?? ""),
     slug: asStringOrNull(r.slug),
     brand_name: asStringOrNull(r.brand_name),
     name: asStringOrNull(r.name),
+    mobile: asStringOrNull(r.mobile),
     email: asStringOrNull(r.email),
     plan_type: asStringOrNull(r.plan_type),
+    business_type: asStringOrNull(r.business_type),
+    status: normalizeBusinessStatus(r),
     is_active: typeof r.is_active === "boolean" ? r.is_active : null,
     created_at: asStringOrNull(r.created_at),
   }));
+  const inUseTypeSlugs = (businessTypesInUseData ?? [])
+    .map((r) => {
+      const o = r as Record<string, unknown>;
+      return typeof o.business_type === "string" ? o.business_type.trim() : "";
+    })
+    .filter((v) => v.length > 0);
+  const businessTypeFilterOptions = mergeBusinessTypeCatalogWithInUseSlugs(
+    catalogResult.options,
+    inUseTypeSlugs,
+  );
+
+  const visibleRows = rows.filter((row) => row.status !== "deleted");
+  const filteredRows = visibleRows;
+  const totalItems = count ?? 0;
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
 
   return (
     <div className="space-y-6">
@@ -77,6 +148,14 @@ export default async function BusinessListPage({
               className="w-full rounded-xl border border-zinc-200 bg-zinc-50/60 px-3.5 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-indigo-600 dark:focus:ring-indigo-400/25"
             />
           </label>
+          <div className="flex items-center gap-2">
+            <div className="text-xs text-zinc-500 dark:text-zinc-400">
+              {`Showing ${filteredRows.length} of ${totalItems} businesses`}
+            </div>
+            <div className="relative">
+              <BusinessListFilters businessTypeOptions={businessTypeFilterOptions} />
+            </div>
+          </div>
         </div>
 
         {error ? (
@@ -86,7 +165,7 @@ export default async function BusinessListPage({
           >
             Failed to fetch businesses: {error.message}
           </div>
-        ) : rows.length === 0 ? (
+        ) : filteredRows.length === 0 ? (
           <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 text-sm font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-zinc-400">
             No businesses found
           </div>
@@ -96,10 +175,13 @@ export default async function BusinessListPage({
               <table className="min-w-[1040px] w-full text-left">
                 <thead className="bg-zinc-50/80 dark:bg-zinc-950/60">
                   <tr className="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+                    <th className="px-4 py-3">#</th>
                     <th className="px-4 py-3">Brand Name</th>
                     <th className="px-4 py-3">Owner Name</th>
+                    <th className="px-4 py-3">Mobile</th>
                     <th className="px-4 py-3">Email</th>
                     <th className="px-4 py-3">Plan Type</th>
+                    <th className="px-4 py-3">Business Type</th>
                     <th className="px-4 py-3">Status</th>
                     <th className="px-4 py-3">Created Date</th>
                     <th className="px-4 py-3">Review page</th>
@@ -107,13 +189,15 @@ export default async function BusinessListPage({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-zinc-200/80 dark:divide-zinc-800">
-                  {rows.map((row) => {
-                    const isActive = row.is_active ?? false;
+                  {filteredRows.map((row, idx) => {
                     return (
                       <tr
                         key={row.id}
                         className="transition-colors hover:bg-zinc-50/80 dark:hover:bg-zinc-900/50"
                       >
+                        <td className="px-4 py-3 text-sm text-zinc-500 dark:text-zinc-400">
+                          {from + idx + 1}
+                        </td>
                         <td className="px-4 py-3 text-sm font-medium text-zinc-900 dark:text-zinc-100">
                           {row.brand_name ?? "—"}
                         </td>
@@ -121,20 +205,29 @@ export default async function BusinessListPage({
                           {row.name ?? "—"}
                         </td>
                         <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
+                          {row.mobile ?? "—"}
+                        </td>
+                        <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
                           {row.email ?? "—"}
                         </td>
                         <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
                           {formatPlan(row.plan_type)}
                         </td>
+                        <td className="px-4 py-3 text-sm text-zinc-700 dark:text-zinc-300">
+                          {resolveBusinessTypeDisplayName(
+                            row.business_type,
+                            businessTypeFilterOptions,
+                          )}
+                        </td>
                         <td className="px-4 py-3">
                           <span
                             className={`inline-flex rounded-full px-2.5 py-1 text-xs font-medium ${
-                              isActive
+                              row.status === "active"
                                 ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-950/60 dark:text-emerald-300"
-                                : "bg-red-100 text-red-700 dark:bg-red-950/60 dark:text-red-300"
+                                : "bg-amber-100 text-amber-700 dark:bg-amber-950/60 dark:text-amber-300"
                             }`}
                           >
-                            {isActive ? "Active" : "Inactive"}
+                            {row.status === "active" ? "Active" : "Inactive"}
                           </span>
                         </td>
                         <td className="px-4 py-3 text-sm text-zinc-600 dark:text-zinc-400">
@@ -156,10 +249,11 @@ export default async function BusinessListPage({
                         </td>
                         <td className="px-4 py-3">
                           <div className="flex items-center gap-2">
+                            <BusinessStatusToggleButton businessId={row.id} status={row.status} />
                             <Link href={`/admin/business/${row.id}`} className={adminPanel.btnSecondary}>
                               View
                             </Link>
-                            <Link href={`/admin/business/${row.id}`} className={adminPanel.btnSecondary}>
+                            <Link href={`/admin/business/${row.id}?mode=edit`} className={adminPanel.btnSecondary}>
                               Edit
                             </Link>
                             <DeleteBusinessButton businessId={row.id} />
@@ -173,14 +267,32 @@ export default async function BusinessListPage({
             </div>
 
             <div className="mt-4 flex items-center justify-between gap-3 rounded-xl border border-zinc-200/80 bg-zinc-50/60 px-4 py-3 text-sm dark:border-zinc-800 dark:bg-zinc-950/40">
-              <p className="text-zinc-500 dark:text-zinc-400">Page 1 of 1</p>
+              <p className="text-zinc-500 dark:text-zinc-400">{`Page ${page} of ${totalPages}`}</p>
               <div className="flex items-center gap-2">
-                <button type="button" disabled className={`${adminPanel.btnSecondary} opacity-60`}>
-                  Previous
-                </button>
-                <button type="button" disabled className={`${adminPanel.btnSecondary} opacity-60`}>
-                  Next
-                </button>
+                {page > 1 ? (
+                  <Link
+                    href={withPage(query, page - 1)}
+                    className={adminPanel.btnSecondary}
+                  >
+                    Previous
+                  </Link>
+                ) : (
+                  <button type="button" disabled className={`${adminPanel.btnSecondary} opacity-60`}>
+                    Previous
+                  </button>
+                )}
+                {page < totalPages ? (
+                  <Link
+                    href={withPage(query, page + 1)}
+                    className={adminPanel.btnSecondary}
+                  >
+                    Next
+                  </Link>
+                ) : (
+                  <button type="button" disabled className={`${adminPanel.btnSecondary} opacity-60`}>
+                    Next
+                  </button>
+                )}
               </div>
             </div>
           </>
@@ -210,4 +322,23 @@ function formatDate(v: string | null): string {
     month: "short",
     year: "numeric",
   }).format(d);
+}
+
+function withPage(
+  query: Record<string, string | string[] | undefined>,
+  page: number,
+): string {
+  const params = new URLSearchParams();
+  for (const [key, raw] of Object.entries(query)) {
+    if (key === "page") continue;
+    if (Array.isArray(raw)) {
+      for (const value of raw) {
+        if (value) params.append(key, value);
+      }
+      continue;
+    }
+    if (raw) params.set(key, raw);
+  }
+  params.set("page", String(page));
+  return `/admin/businesses?${params.toString()}`;
 }

@@ -7,6 +7,10 @@ import type { BusinessChannels } from "@/lib/types/business";
 type Props = {
   googleReviewUrl: string;
   channels: BusinessChannels | null;
+  /** When true, social-channel prompts are suppressed (Google-only redirect mode). */
+  directRedirect?: boolean;
+  /** Scope “show once” per business page. */
+  pageSlug?: string;
   delayMs?: number;
   targetId?: string;
 };
@@ -14,21 +18,25 @@ type Props = {
 export function ReviewDelayedModal({
   googleReviewUrl,
   channels,
+  directRedirect = false,
+  pageSlug = "",
   delayMs = 10_000,
   targetId = "review-flow",
 }: Props) {
   const [open, setOpen] = useState(false);
   const shownOnceRef = useRef(false);
-  const sessionKey = useMemo(
-    () => `delayed-review-modal:${googleReviewUrl.trim().toLowerCase()}`,
-    [googleReviewUrl],
-  );
+  const sessionKey = useMemo(() => {
+    const slugPart = pageSlug.trim().toLowerCase() || "page";
+    const g = googleReviewUrl.trim().toLowerCase() || "no-google";
+    return `delayed-review-once:${slugPart}:${g}`;
+  }, [googleReviewUrl, pageSlug]);
 
   const shouldTrigger = useMemo(() => {
+    if (directRedirect) return false;
     if (!isSafeHttpUrl(googleReviewUrl)) return false;
     const preferred = getPreferredPublicUrl({ googleReviewUrl, channels });
     return preferred.sourceLabel !== "Google";
-  }, [channels, googleReviewUrl]);
+  }, [channels, directRedirect, googleReviewUrl]);
 
   useEffect(() => {
     if (!shouldTrigger || shownOnceRef.current) return;
@@ -41,6 +49,7 @@ export function ReviewDelayedModal({
     }
     const timer = window.setTimeout(() => {
       if (document.body.dataset.reviewModalOpen === "1") return;
+      if (document.body.dataset.reviewRewardModalOpen === "1") return;
       shownOnceRef.current = true;
       try {
         sessionStorage.setItem(sessionKey, "1");
@@ -63,7 +72,7 @@ export function ReviewDelayedModal({
 
   return (
     <div
-      className="fixed inset-0 z-[90] flex items-center justify-center bg-zinc-950/45 px-4 backdrop-blur-[1px]"
+      className="fixed inset-0 z-[88] flex items-center justify-center bg-zinc-950/45 px-4 backdrop-blur-[1px]"
       role="dialog"
       aria-modal="true"
       aria-labelledby="delayed-review-title"

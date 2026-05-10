@@ -1,13 +1,20 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
+import { hasRecentScanLog } from "@/lib/scan/scan-log-dedupe";
+import { normalizeScanQrTypeParam, type ScanQrType } from "@/lib/scan/qr-types";
+
+const UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+const REFERRER_MAX = 2048;
 
 type ScanPostBody = {
   business_id: string;
   event_type: "scan";
+  qr_type: ScanQrType;
+  referrer: string | null;
 };
-
-const UUID_RE =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function parseScanBody(input: unknown):
   | { ok: true; data: ScanPostBody }
@@ -33,13 +40,40 @@ function parseScanBody(input: unknown):
     fields.event_type = 'Must be "scan"';
   }
 
+  const rawQr =
+    typeof body.qr_type === "string" ? body.qr_type.trim() : "";
+  let qrType: ScanQrType = "master";
+  if (rawQr) {
+    const normalized = normalizeScanQrTypeParam(rawQr);
+    if (!normalized) {
+      fields.qr_type = "Invalid qr_type";
+    } else {
+      qrType = normalized;
+    }
+  }
+
+  let referrer: string | null = null;
+  if (body.referrer !== undefined && body.referrer !== null) {
+    if (typeof body.referrer !== "string") {
+      fields.referrer = "Must be a string";
+    } else {
+      const r = body.referrer.trim();
+      referrer = r ? r.slice(0, REFERRER_MAX) : null;
+    }
+  }
+
   if (Object.keys(fields).length > 0) {
     return { ok: false, error: "Validation failed", fields };
   }
 
   return {
     ok: true,
-    data: { business_id: businessId, event_type: "scan" },
+    data: {
+      business_id: businessId,
+      event_type: "scan",
+      qr_type: qrType,
+      referrer,
+    },
   };
 }
 
@@ -63,13 +97,41 @@ export async function POST(request: Request) {
       );
     }
 
+    const headerUa = request.headers.get("user-agent");
+    const headerRef =
+      request.headers.get("referer") ?? request.headers.get("referrer");
+
     const payload = {
       business_id: parsed.data.business_id,
       event_type: parsed.data.event_type,
-      device: request.headers.get("user-agent") || null,
+      device: headerUa,
+      qr_type: parsed.data.qr_type,
+      referrer: parsed.data.referrer ?? headerRef,
     };
 
     const supabase = createServiceRoleClient();
+    const { data: businessRow } = await supabase
+      .from("businesses")
+      .select("id,status,is_active")
+      .eq("id", payload.business_id)
+      .maybeSingle();
+    if (!businessRow) {
+      return NextResponse.json({ error: "Business not found" }, { status: 404 });
+    }
+    const status = normalizeBusinessStatus(businessRow as Record<string, unknown>);
+    if (!isBusinessActiveStatus(status)) {
+      return NextResponse.json({ error: "Business no longer available" }, { status: 410 });
+    }
+
+    const dup = await hasRecentScanLog(
+      supabase,
+      payload.business_id,
+      payload.qr_type,
+    );
+    if (dup) {
+      return NextResponse.json({ ok: true, deduped: true }, { status: 200 });
+    }
+
     const { data, error } = await supabase
       .from("scan_logs")
       .insert([payload])

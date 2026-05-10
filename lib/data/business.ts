@@ -1,6 +1,7 @@
 import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
 import type {
   ActiveBusiness,
   BusinessRow,
@@ -37,7 +38,7 @@ export async function fetchBusinessBySlug(
     return { status: "not_found" };
   }
 
-  if (!row.is_active) {
+  if (!isBusinessActiveStatus(row.status)) {
     return {
       status: "inactive",
       business: {
@@ -68,6 +69,7 @@ function coerceBusinessRow(raw: Record<string, unknown>): BusinessRow {
     name: readString(raw.name),
     brand_name: readNullableString(raw.brand_name),
     logo_url: readNullableString(raw.logo_url),
+    status: normalizeBusinessStatus(raw),
     is_active: readBoolean(raw.is_active, true),
     theme_primary: readNullableString(raw.theme_primary),
     theme_background: readNullableString(raw.theme_background),

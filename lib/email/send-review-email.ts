@@ -1,4 +1,9 @@
-import { Resend } from "resend";
+import { createElement } from "react";
+import { ReviewSubmittedEmail } from "@/emails/templates/ReviewSubmittedEmail";
+import { getAppSettingsPublic } from "@/lib/data/app-settings";
+import { resolveBusinessRecipient } from "@/lib/email/resolve-recipient";
+import { sanitizePrimaryColor } from "@/lib/email/sanitize-primary-color";
+import { sendAppEmail } from "@/lib/email/send-app-email";
 
 export type SendReviewEmailInput = {
   rating: number;
@@ -8,43 +13,56 @@ export type SendReviewEmailInput = {
   mobile: string;
 };
 
-function getResendClient() {
-  const apiKey = process.env.RESEND_API_KEY;
-  if (!apiKey) {
-    throw new Error("Missing RESEND_API_KEY");
+export type SendReviewEmailBranding = {
+  ownerFullName: string;
+  brandName: string;
+  businessEmail: string | null;
+  clientLogoUrl: string | null;
+  primaryColor: string | null;
+};
+
+export async function sendReviewEmail(
+  data: SendReviewEmailInput,
+  branding: SendReviewEmailBranding,
+  options?: { dedupeKey?: string },
+) {
+  const recipient = resolveBusinessRecipient(branding.businessEmail);
+  if (!recipient) {
+    console.warn(
+      "[email] skip review_submitted: no business email and no ADMIN_EMAIL fallback",
+    );
+    return null;
   }
-  return new Resend(apiKey);
-}
 
-export async function sendReviewEmail(data: SendReviewEmailInput) {
-  try {
-    const resend = getResendClient();
+  const settings = await getAppSettingsPublic();
+  const primary = sanitizePrimaryColor(branding.primaryColor);
+  const brandLabel = branding.brandName.trim() || "Your business";
+  const owner = branding.ownerFullName.trim() || "there";
 
-    const { data: response, error } = await resend.emails.send({
-      from: "onboarding@resend.dev",
-      to: ["abhinavwork89@gmail.com"],
-      subject: "New Review Received",
-      text: [
-        "New Review Received",
-        "",
-        `Rating: ${data.rating}`,
-        `Review text: ${data.review_text}`,
-        `Customer name: ${data.name}`,
-        `Customer email: ${data.email}`,
-        `Customer mobile: ${data.mobile}`,
-      ].join("\n"),
-    });
-    console.log("RESEND RESPONSE:", response, error);
+  const subject = `New review — ${brandLabel}`;
 
-    if (error) {
-      throw new Error(error.message || "Failed to send review email");
-    }
-
-    return response;
-  } catch (error) {
-    console.log("SEND REVIEW EMAIL ERROR:", error);
-    throw error instanceof Error
-      ? error
-      : new Error("Unknown error while sending review email");
-  }
+  return sendAppEmail({
+    to: recipient,
+    subject,
+    businessEmail: branding.businessEmail,
+    businessDisplayName: brandLabel,
+    replyTo: data.email?.trim() || undefined,
+    templateType: "review_submitted",
+    dedupeKey: options?.dedupeKey,
+    react: createElement(ReviewSubmittedEmail, {
+      oneCoreLogoUrl: settings.brandingLogoUrl,
+      clientBrandLogoUrl: branding.clientLogoUrl,
+      primaryColor: primary,
+      ownerFullName: owner,
+      brandName: brandLabel,
+      footerCopyrightYear: settings.copyrightYear,
+      rating: data.rating,
+      reviewMessage: data.review_text,
+      customer: {
+        name: data.name,
+        email: data.email,
+        mobile: data.mobile,
+      },
+    }),
+  });
 }

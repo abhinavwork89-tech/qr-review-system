@@ -1,5 +1,7 @@
 ﻿import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
+import { schedulePatchLifecycleEmails } from "@/lib/email/lifecycle-triggers";
 
 type Params = {
   params: Promise<{ id: string }>;
@@ -16,7 +18,7 @@ export async function DELETE(_request: Request, { params }: Params) {
     const supabase = createServiceRoleClient();
     const { data, error } = await supabase
       .from("businesses")
-      .update({ is_active: false })
+      .update({ is_active: false, status: "deleted" })
       .eq("id", businessId)
       .select("id")
       .maybeSingle();
@@ -68,6 +70,24 @@ export async function PATCH(request: Request, { params }: Params) {
     }
 
     const supabase = createServiceRoleClient();
+    const { data: currentRow, error: currentError } = await supabase
+      .from("businesses")
+      .select(
+        "id,status,is_active,plan_type,name,brand_name,email,logo_url,primary_color,slug",
+      )
+      .eq("id", businessId)
+      .maybeSingle();
+    if (currentError) {
+      return NextResponse.json({ error: currentError.message }, { status: 500 });
+    }
+    if (!currentRow) {
+      return NextResponse.json({ error: "Business not found" }, { status: 404 });
+    }
+    const currentStatus = normalizeBusinessStatus(currentRow as Record<string, unknown>);
+    if (currentStatus === "deleted") {
+      return NextResponse.json({ error: "Deleted business cannot be modified" }, { status: 410 });
+    }
+
     const { data, error } = await supabase
       .from("businesses")
       .update(parsed.data)
@@ -90,6 +110,12 @@ export async function PATCH(request: Request, { params }: Params) {
     if (!data) {
       return NextResponse.json({ error: "Business not found" }, { status: 404 });
     }
+
+    schedulePatchLifecycleEmails({
+      businessId,
+      before: currentRow as Record<string, unknown>,
+      patch: parsed.data,
+    });
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err) {
@@ -175,6 +201,26 @@ function parseBusinessPatchBody(body: unknown): ParseOk | ParseErr {
     fields[key] = "Must be a boolean";
   }
 
+  if ("status" in input) {
+    const raw = input.status;
+    if (raw === "active" || raw === "inactive" || raw === "deleted") {
+      patch.status = raw;
+      patch.is_active = isBusinessActiveStatus(raw);
+    } else {
+      fields.status = 'Must be one of: "active", "inactive", "deleted"';
+    }
+  }
+
+  if ("is_active" in input) {
+    const value = input.is_active;
+    if (typeof value !== "boolean") {
+      fields.is_active = "Must be a boolean";
+    } else if (!("status" in patch)) {
+      patch.is_active = value;
+      patch.status = value ? "active" : "inactive";
+    }
+  }
+
   if ("channels" in input) {
     if (typeof input.channels === "object" && input.channels !== null && !Array.isArray(input.channels)) {
       const channels = input.channels as Record<string, unknown>;
@@ -186,6 +232,33 @@ function parseBusinessPatchBody(body: unknown): ParseOk | ParseErr {
       };
     } else {
       fields.channels = "Must be an object";
+    }
+  }
+
+  if ("logo_url" in input) {
+    const logoUrl = readOptionalUrl(input.logo_url);
+    if (logoUrl === "__invalid__") {
+      fields.logo_url = "Must be a valid URL";
+    } else {
+      patch.logo_url = logoUrl;
+    }
+  }
+
+  if ("banner_urls" in input) {
+    const bannerUrls = readOptionalUrlArray(input.banner_urls);
+    if (bannerUrls === null) {
+      fields.banner_urls = "Must be an array of valid URLs";
+    } else {
+      patch.banner_urls = bannerUrls;
+    }
+  }
+
+  if ("resource_urls" in input) {
+    const resourceUrls = readOptionalUrlArray(input.resource_urls);
+    if (resourceUrls === null) {
+      fields.resource_urls = "Must be an array of valid URLs";
+    } else {
+      patch.resource_urls = resourceUrls;
     }
   }
 
@@ -206,5 +279,36 @@ function normalizeRewardConfig(v: unknown): string[] {
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+}
+
+function readOptionalUrl(v: unknown): string | null | "__invalid__" {
+  if (v === undefined || v === null) return null;
+  if (typeof v !== "string") return "__invalid__";
+  const trimmed = v.trim();
+  if (!trimmed) return null;
+  return isSafeHttpUrl(trimmed) ? trimmed : "__invalid__";
+}
+
+function readOptionalUrlArray(v: unknown): string[] | null {
+  if (v === undefined || v === null) return [];
+  if (!Array.isArray(v)) return null;
+  const out: string[] = [];
+  for (const item of v) {
+    if (typeof item !== "string") return null;
+    const trimmed = item.trim();
+    if (!trimmed) continue;
+    if (!isSafeHttpUrl(trimmed)) return null;
+    out.push(trimmed);
+  }
+  return out;
+}
+
+function isSafeHttpUrl(value: string): boolean {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
 }
 

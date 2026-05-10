@@ -1,6 +1,6 @@
 import type { BusinessChannels } from "@/lib/types/business";
 
-type ChannelKey = "instagram" | "whatsapp" | "facebook" | "website";
+type ChannelKey = "instagram" | "whatsapp" | "facebook" | "website" | "x";
 
 export type PrioritizedChannel = {
   key: ChannelKey;
@@ -12,6 +12,7 @@ const CHANNEL_ORDER: ChannelKey[] = [
   "whatsapp",
   "facebook",
   "website",
+  "x",
 ];
 
 export function isSafeHttpUrl(value: string): boolean {
@@ -62,7 +63,16 @@ export function getPrioritizedChannels(
 export function getPreferredPublicUrl(input: {
   googleReviewUrl: string;
   channels: BusinessChannels | null;
+  /** When true, only the Google review URL is used for redirects (never social channels). */
+  directRedirect?: boolean;
 }): { url: string | null; sourceLabel: string } {
+  if (input.directRedirect === true) {
+    if (isSafeHttpUrl(input.googleReviewUrl)) {
+      return { url: input.googleReviewUrl.trim(), sourceLabel: "Google" };
+    }
+    return { url: null, sourceLabel: "Google" };
+  }
+
   const prioritized = getPrioritizedChannels(input.channels);
   if (prioritized.length > 0) {
     return {
@@ -80,9 +90,8 @@ function readPrimaryChannelKey(channels: BusinessChannels): ChannelKey | null {
   const raw = (channels as unknown as Record<string, unknown>).primary;
   if (typeof raw !== "string") return null;
   const normalized = raw.trim().toLowerCase();
-  return CHANNEL_ORDER.includes(normalized as ChannelKey)
-    ? (normalized as ChannelKey)
-    : null;
+  const key = normalized === "twitter" ? "x" : normalized;
+  return CHANNEL_ORDER.includes(key as ChannelKey) ? (key as ChannelKey) : null;
 }
 
 function toChannelLabel(key: ChannelKey): string {
@@ -95,6 +104,8 @@ function toChannelLabel(key: ChannelKey): string {
       return "Facebook";
     case "website":
       return "Website";
+    case "x":
+      return "X";
     default:
       return "Google";
   }

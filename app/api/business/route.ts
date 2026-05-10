@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
+import { scheduleWelcomeEmailAfterCreate } from "@/lib/email/lifecycle-triggers";
 
 const SLUG_SUFFIX_LEN = 4;
 const SLUG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -13,7 +15,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Invalid JSON body" }, { status: 400 });
     }
 
-    const parsed = parseBusinessBody(json);
+    const supabase = createServiceRoleClient();
+    const parsed = await parseBusinessBody(json, supabase);
     if (!parsed.ok) {
       return NextResponse.json(
         { error: parsed.error, fields: parsed.fields },
@@ -21,7 +24,6 @@ export async function POST(request: Request) {
       );
     }
 
-    const supabase = createServiceRoleClient();
     const row = parsed.data;
 
     const maxAttempts = 8;
@@ -38,6 +40,7 @@ export async function POST(request: Request) {
           email: row.email,
           mobile: row.mobile,
           brand_name: row.brand_name,
+          business_type: row.business_type,
           primary_color: row.primary_color,
           secondary_color: row.secondary_color,
           language: row.language,
@@ -50,11 +53,23 @@ export async function POST(request: Request) {
           logo_url: row.logo_url,
           banner_urls: row.banner_urls,
           resource_urls: row.resource_urls,
+          status: row.status,
+          is_active: isBusinessActiveStatus(row.status),
         })
         .select("id")
         .single();
 
       if (!error && data) {
+        scheduleWelcomeEmailAfterCreate({
+          businessId: data.id,
+          slug,
+          name: row.name,
+          brandName: row.brand_name,
+          email: row.email,
+          logoUrl: row.logo_url,
+          primaryColor: row.primary_color,
+          resourceUrls: row.resource_urls,
+        });
         return NextResponse.json(
           { ok: true, slug, id: data.id },
           { status: 201 },
@@ -99,6 +114,7 @@ type BusinessInsertPayload = {
   email: string;
   mobile: string;
   brand_name: string;
+  business_type: string;
   primary_color: string;
   secondary_color: string;
   language: string;
@@ -111,6 +127,7 @@ type BusinessInsertPayload = {
   logo_url: string | null;
   banner_urls: string[];
   resource_urls: string[];
+  status: "active" | "inactive" | "deleted";
 };
 
 type ParseOk = { ok: true; data: BusinessInsertPayload };
@@ -120,7 +137,10 @@ type ParseErr = {
   fields?: Record<string, string>;
 };
 
-function parseBusinessBody(body: unknown): ParseOk | ParseErr {
+async function parseBusinessBody(
+  body: unknown,
+  supabase: ReturnType<typeof createServiceRoleClient>,
+): Promise<ParseOk | ParseErr> {
   const fields: Record<string, string> = {};
 
   if (typeof body !== "object" || body === null || Array.isArray(body)) {
@@ -137,7 +157,15 @@ function parseBusinessBody(body: unknown): ParseOk | ParseErr {
   const secondary_color = readTrimmedString(o.secondary_color);
   const language = readTrimmedString(o.language);
   const plan_type = readTrimmedString(o.plan_type);
-  const google_url = readTrimmedString(o.google_url);
+  const business_type = readTrimmedString(o.business_type);
+  if (!business_type) fields.business_type = "Required";
+
+  const google_url_parsed = readOptionalUrl(o.google_url);
+  if (google_url_parsed === "__invalid__") {
+    fields.google_url = "Must be a valid URL";
+  }
+  const google_url =
+    google_url_parsed === "__invalid__" || google_url_parsed === null ? "" : google_url_parsed;
 
   if (!name) fields.name = "Required";
   if (!email) fields.email = "Required";
@@ -149,7 +177,6 @@ function parseBusinessBody(body: unknown): ParseOk | ParseErr {
   if (!secondary_color) fields.secondary_color = "Required";
   if (!language) fields.language = "Required";
   if (!plan_type) fields.plan_type = "Required";
-  if (!google_url) fields.google_url = "Required";
 
   const thresholdRaw = o.threshold;
   let threshold: number;
@@ -216,6 +243,31 @@ function parseBusinessBody(body: unknown): ParseOk | ParseErr {
     return { ok: false, error: "Validation failed", fields };
   }
 
+  const { data: typeOk, error: typeErr } = await supabase
+    .from("business_types")
+    .select("slug")
+    .eq("slug", business_type)
+    .maybeSingle();
+
+  if (typeErr) {
+    if (typeErr.code !== "42P01") {
+      return {
+        ok: false,
+        error: "Could not validate business type",
+        fields: { business_type: typeErr.message },
+      };
+    }
+  } else if (!typeOk) {
+    return {
+      ok: false,
+      error: "Validation failed",
+      fields: {
+        business_type:
+          "Unknown business type. Add it under Admin → Settings → Business Types.",
+      },
+    };
+  }
+
   return {
     ok: true,
     data: {
@@ -223,6 +275,7 @@ function parseBusinessBody(body: unknown): ParseOk | ParseErr {
       email,
       mobile,
       brand_name,
+      business_type,
       primary_color,
       secondary_color,
       language,
@@ -235,6 +288,10 @@ function parseBusinessBody(body: unknown): ParseOk | ParseErr {
       logo_url: logo_url === "__invalid__" ? null : logo_url,
       banner_urls: banner_urls ?? [],
       resource_urls: resource_urls ?? [],
+      status: normalizeBusinessStatus({
+        status: o.status,
+        is_active: o.is_active,
+      }),
     },
   };
 }

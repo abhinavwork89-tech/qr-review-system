@@ -1,18 +1,24 @@
-import { getPrioritizedChannels } from "@/lib/review/business-config";
+import {
+  getPrioritizedChannels,
+  isSafeHttpUrl,
+} from "@/lib/review/business-config";
+import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
 import type { BusinessChannels } from "@/lib/types/business";
 
 type Props = {
+  businessId: string;
   channels: BusinessChannels | null;
   customerCareNumber: string | null;
 };
 
-type ChannelKey = "instagram" | "whatsapp" | "facebook" | "website";
+type ChannelKey = "instagram" | "whatsapp" | "facebook" | "website" | "x";
 
 const LABELS: Record<ChannelKey, string> = {
   instagram: "Instagram",
   whatsapp: "WhatsApp",
   facebook: "Facebook",
   website: "Website",
+  x: "X",
 };
 
 const ICONS: Record<ChannelKey, string> = {
@@ -20,10 +26,17 @@ const ICONS: Record<ChannelKey, string> = {
   whatsapp: "WA",
   facebook: "FB",
   website: "WEB",
+  x: "X",
 };
 
-export function ReviewChannels({ channels, customerCareNumber }: Props) {
-  const prioritized = getPrioritizedChannels(channels);
+export function ReviewChannels({
+  businessId,
+  channels,
+  customerCareNumber,
+}: Props) {
+  const prioritized = getPrioritizedChannels(channels).filter((c) =>
+    isSafeHttpUrl(c.url),
+  );
   const primary = prioritized[0] ?? null;
   const secondary = prioritized.slice(primary ? 1 : 0);
   const callHref = toTelHref(customerCareNumber);
@@ -32,17 +45,31 @@ export function ReviewChannels({ channels, customerCareNumber }: Props) {
     return null;
   }
 
+  const trackHref = (key: ChannelKey, url: string) => {
+    if (!businessId?.trim()) return url;
+    return buildTrackedScanOutUrl(businessId.trim(), key, url.trim());
+  };
+
   return (
     <section
       aria-label="Connect with business"
       className="rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
     >
-      {primary ? <PrimaryChannelButton channelKey={primary.key} href={primary.url} /> : null}
+      {primary ? (
+        <PrimaryChannelButton
+          channelKey={primary.key}
+          href={trackHref(primary.key, primary.url)}
+        />
+      ) : null}
 
       {secondary.length > 0 ? (
         <div className={`grid gap-3 ${primary ? "mt-3" : ""} sm:grid-cols-2`}>
           {secondary.map((item) => (
-            <ChannelButton key={`${item.key}-${item.url}`} channelKey={item.key} href={item.url} />
+            <ChannelButton
+              key={`${item.key}-${item.url}`}
+              channelKey={item.key}
+              href={trackHref(item.key, item.url)}
+            />
           ))}
         </div>
       ) : null}

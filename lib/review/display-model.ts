@@ -33,30 +33,50 @@ function emptyChannel(): BusinessChannelLink {
   return { enabled: false, url: "" };
 }
 
+function parseChannelRecord(raw: unknown): BusinessChannelLink {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
+    return emptyChannel();
+  }
+  const r = raw as Record<string, unknown>;
+  return {
+    enabled: typeof r.enabled === "boolean" ? r.enabled : false,
+    url: typeof r.url === "string" ? r.url : "",
+    primary: r.primary === true,
+  };
+}
+
+function parseXFromChannels(o: Record<string, unknown>): BusinessChannelLink {
+  const x = o.x;
+  if (typeof x === "object" && x !== null && !Array.isArray(x)) {
+    return parseChannelRecord(x);
+  }
+  const legacyTwitter = o.twitter;
+  if (
+    typeof legacyTwitter === "object" &&
+    legacyTwitter !== null &&
+    !Array.isArray(legacyTwitter)
+  ) {
+    return parseChannelRecord(legacyTwitter);
+  }
+  return emptyChannel();
+}
+
 function parseChannels(raw: unknown): BusinessChannels | null {
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
     return null;
   }
   const o = raw as Record<string, unknown>;
-  const primary =
-    typeof o.primary === "string" &&
-    ["instagram", "whatsapp", "facebook", "website"].includes(
-      o.primary.trim().toLowerCase(),
-    )
-      ? (o.primary.trim().toLowerCase() as BusinessChannels["primary"])
-      : undefined;
-  const link = (key: string): BusinessChannelLink => {
-    const c = o[key];
-    if (typeof c !== "object" || c === null || Array.isArray(c)) {
-      return emptyChannel();
-    }
-    const r = c as Record<string, unknown>;
-    return {
-      enabled: typeof r.enabled === "boolean" ? r.enabled : false,
-      url: typeof r.url === "string" ? r.url : "",
-      primary: r.primary === true,
-    };
-  };
+  const primaryRaw =
+    typeof o.primary === "string" ? o.primary.trim().toLowerCase() : "";
+  const normalizedPrimary = primaryRaw === "twitter" ? "x" : primaryRaw;
+  const primary = ["instagram", "whatsapp", "facebook", "website", "x"].includes(
+    normalizedPrimary,
+  )
+    ? (normalizedPrimary as BusinessChannels["primary"])
+    : undefined;
+
+  const link = (key: string): BusinessChannelLink => parseChannelRecord(o[key]);
+
   return {
     primary,
     spin_enabled: o.spin_enabled === true,
@@ -66,6 +86,7 @@ function parseChannels(raw: unknown): BusinessChannels | null {
     whatsapp: link("whatsapp"),
     facebook: link("facebook"),
     website: link("website"),
+    x: parseXFromChannels(o),
   };
 }
 

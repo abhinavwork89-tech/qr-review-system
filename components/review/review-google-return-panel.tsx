@@ -1,7 +1,7 @@
 "use client";
 
 import confetti from "canvas-confetti";
-import { useCallback } from "react";
+import { useCallback, useMemo } from "react";
 
 type ConfettiOpts = NonNullable<Parameters<typeof confetti>[0]>;
 
@@ -44,21 +44,25 @@ export function ReviewGoogleReturnPanel({
   onNotYet,
   onNo,
 }: Props) {
+  const canOpenReviewUrl = useMemo(() => {
+    const trimmed = reviewUrl.trim();
+    try {
+      const u = new URL(trimmed);
+      return u.protocol === "http:" || u.protocol === "https:";
+    } catch {
+      return false;
+    }
+  }, [reviewUrl]);
+
   const handleYes = useCallback(() => {
     playConfettiBurst();
     onYes();
   }, [onYes]);
 
   const openGoogle = useCallback(() => {
-    const trimmed = reviewUrl.trim();
-    try {
-      const u = new URL(trimmed);
-      if (u.protocol !== "http:" && u.protocol !== "https:") return;
-    } catch {
-      return;
-    }
-    window.open(trimmed, "_blank", "noopener,noreferrer");
-  }, [reviewUrl]);
+    if (!canOpenReviewUrl) return;
+    window.open(reviewUrl.trim(), "_blank", "noopener,noreferrer");
+  }, [canOpenReviewUrl, reviewUrl]);
 
   if (phase === "yes_success") {
     return (
@@ -79,13 +83,20 @@ export function ReviewGoogleReturnPanel({
         <p className="text-center text-sm font-medium text-[var(--review-fg)] sm:text-base">
           You can still submit your review
         </p>
-        <button
-          type="button"
-          onClick={openGoogle}
-          className="w-full rounded-xl bg-[var(--review-primary)] px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition-[transform,filter] duration-200 hover:brightness-110 active:scale-[0.99] motion-reduce:active:scale-100"
-        >
-          {`Open ${reviewSourceLabel} Review`}
-        </button>
+        {canOpenReviewUrl ? (
+          <button
+            type="button"
+            onClick={openGoogle}
+            className="w-full rounded-xl bg-[var(--review-primary)] px-4 py-3.5 text-sm font-semibold text-white shadow-sm transition-[transform,filter] duration-200 hover:brightness-110 active:scale-[0.99] motion-reduce:active:scale-100"
+          >
+            {`Open ${reviewSourceLabel} Review`}
+          </button>
+        ) : (
+          <p className="text-center text-sm leading-relaxed text-[var(--review-muted)]">
+            A public review link isn&apos;t available. Thank you for leaving
+            feedback here.
+          </p>
+        )}
       </div>
     );
   }

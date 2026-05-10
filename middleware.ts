@@ -29,5 +29,6 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/admin/:path*"],
+  /** Include `/admin` so the index redirect is protected (not only `/admin/...`). */
+  matcher: ["/admin", "/admin/:path*"],
 };

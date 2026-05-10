@@ -1,4 +1,16 @@
-export default function AdminSettingsPage() {
+import { BrandingSettingsSection } from "@/components/admin/settings/branding-settings-section";
+import { BusinessTypesManager } from "@/components/admin/settings/business-types-manager";
+import { getAppSettingsPublic } from "@/lib/data/app-settings";
+import { listBusinessTypesWithUsage } from "@/lib/data/business-types-admin";
+
+export const dynamic = "force-dynamic";
+
+export default async function AdminSettingsPage() {
+  const [settings, { types, error: businessTypesError }] = await Promise.all([
+    getAppSettingsPublic(),
+    listBusinessTypesWithUsage(),
+  ]);
+
   return (
     <div className="space-y-8">
       <div>
@@ -6,14 +18,12 @@ export default function AdminSettingsPage() {
           Settings
         </h1>
         <p className="mt-1 text-sm text-zinc-500 dark:text-zinc-400">
-          Account and workspace preferences.
+          Branding, footer content, and business type catalog.
         </p>
       </div>
-      <div className="rounded-2xl border border-zinc-200/80 bg-white p-6 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80 sm:p-8">
-        <p className="text-sm leading-relaxed text-zinc-500 dark:text-zinc-400">
-          Settings UI placeholder.
-        </p>
-      </div>
+
+      <BrandingSettingsSection initial={settings} />
+      <BusinessTypesManager initialTypes={types} loadError={businessTypesError} />
     </div>
   );
 }

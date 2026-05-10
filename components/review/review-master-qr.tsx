@@ -5,18 +5,34 @@ import { useMemo, useRef } from "react";
 
 type ReviewMasterQrProps = {
   slug: string;
+  brandName?: string;
+  logoUrl?: string | null;
 };
 
 /** Client-only (load via `next/dynamic` with `ssr: false`) so `window` is defined. */
-export default function ReviewMasterQr({ slug }: ReviewMasterQrProps) {
+export default function ReviewMasterQr({ slug, brandName, logoUrl }: ReviewMasterQrProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const url = `${window.location.origin}/r/${slug}`;
+  const size = 200;
+
+  const imageSettings =
+    logoUrl && logoUrl.trim().length > 0
+      ? {
+          src: logoUrl.trim(),
+          height: Math.round(size * 0.22),
+          width: Math.round(size * 0.22),
+          excavate: true,
+        }
+      : undefined;
 
   const fileName = useMemo(() => {
-    const normalized = slug.trim().replace(/[^a-zA-Z0-9-]+/g, "-").replace(/-+/g, "-");
-    const safe = normalized.replace(/^-|-$/g, "") || "review";
-    return `${safe}-qr.png`;
-  }, [slug]);
+    const brandPart = (brandName ?? slug)
+      .trim()
+      .replace(/[^a-zA-Z0-9]+/g, "-")
+      .replace(/-+/g, "-")
+      .replace(/^-|-$/g, "") || "business";
+    return `${brandPart}-master.png`;
+  }, [brandName, slug]);
 
   const handleDownload = () => {
     const canvas = canvasRef.current;
@@ -42,10 +58,11 @@ export default function ReviewMasterQr({ slug }: ReviewMasterQrProps) {
             <QRCodeCanvas
               ref={canvasRef}
               value={url}
-              size={200}
+              size={size}
               marginSize={2}
               bgColor="#ffffff"
               fgColor="#111827"
+              imageSettings={imageSettings}
             />
           </div>
         </div>

@@ -7,6 +7,14 @@ const ReviewMasterQr = dynamic(() => import("@/components/review/review-master-q
   loading: () => null,
 });
 
-export function ReviewMasterQrLazy({ slug }: { slug: string }) {
-  return <ReviewMasterQr slug={slug} />;
+export function ReviewMasterQrLazy({
+  slug,
+  brandName,
+  logoUrl,
+}: {
+  slug: string;
+  brandName?: string;
+  logoUrl?: string | null;
+}) {
+  return <ReviewMasterQr slug={slug} brandName={brandName} logoUrl={logoUrl} />;
 }

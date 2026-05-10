@@ -26,6 +26,47 @@ export type BannerSliderProps = {
 
 const SWIPE_PX = 48;
 
+function BannerSlideImage({
+  src,
+  alt,
+  priority,
+  aspectClassName,
+}: {
+  src: string;
+  alt: string;
+  priority: boolean;
+  aspectClassName: string;
+}) {
+  const [failed, setFailed] = useState(false);
+
+  if (failed) {
+    return (
+      <div
+        className={`relative w-full ${aspectClassName} flex items-center justify-center bg-zinc-200/90 text-center text-xs text-zinc-600 dark:bg-zinc-800 dark:text-zinc-400`}
+        role="img"
+        aria-label={alt || "Banner image unavailable"}
+      >
+        Image unavailable
+      </div>
+    );
+  }
+
+  return (
+    <div className={`relative w-full ${aspectClassName}`}>
+      <Image
+        src={src}
+        alt={alt}
+        fill
+        className="object-cover"
+        sizes="100vw"
+        priority={priority}
+        unoptimized
+        onError={() => setFailed(true)}
+      />
+    </div>
+  );
+}
+
 export function BannerSlider({
   banners,
   intervalMs = 5500,
@@ -142,23 +183,18 @@ export function BannerSlider({
               className="min-w-full shrink-0"
               aria-hidden={i !== index}
             >
-              <div className={`relative w-full ${aspectClassName}`}>
-                <a
-                  href={b.href}
-                  onClick={onBannerClick}
-                  className="absolute inset-0 block outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset dark:focus-visible:ring-zinc-500"
-                >
-                  <Image
-                    src={b.src}
-                    alt={b.alt ?? ""}
-                    fill
-                    className="object-cover"
-                    sizes="100vw"
-                    priority={i === 0}
-                    unoptimized
-                  />
-                </a>
-              </div>
+              <a
+                href={b.href}
+                onClick={onBannerClick}
+                className="block outline-none focus-visible:ring-2 focus-visible:ring-zinc-400 focus-visible:ring-inset dark:focus-visible:ring-zinc-500"
+              >
+                <BannerSlideImage
+                  src={b.src}
+                  alt={b.alt ?? ""}
+                  priority={i === 0}
+                  aspectClassName={aspectClassName}
+                />
+              </a>
             </div>
           ))}
         </div>

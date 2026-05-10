@@ -29,9 +29,9 @@ export function ReviewRewardGames({
 
   useEffect(() => {
     if (open) {
-      document.body.dataset.reviewModalOpen = "1";
+      document.body.dataset.reviewRewardModalOpen = "1";
       return () => {
-        delete document.body.dataset.reviewModalOpen;
+        delete document.body.dataset.reviewRewardModalOpen;
       };
     }
     return;
@@ -57,33 +57,43 @@ export function ReviewRewardGames({
         aria-label="Rewards"
         className="rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
       >
-        <div className="flex flex-wrap gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           {spinEnabled ? (
-            <button
-              type="button"
-              disabled={spinUsed}
-              onClick={() => runGame("spin")}
-              className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[var(--review-primary)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-55"
-            >
-              {spinUsed ? "Spin Used" : "Spin"}
-            </button>
+            spinUsed ? (
+              <p className="text-sm text-[var(--review-muted)]">
+                You&apos;ve already claimed your spin reward.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => runGame("spin")}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[var(--review-primary)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
+              >
+                Spin
+              </button>
+            )
           ) : null}
           {scratchEnabled ? (
-            <button
-              type="button"
-              disabled={scratchUsed}
-              onClick={() => runGame("scratch")}
-              className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_16%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] px-4 py-2.5 text-sm font-semibold text-[var(--review-fg)] shadow-sm transition hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-fg))] disabled:cursor-not-allowed disabled:opacity-55"
-            >
-              {scratchUsed ? "Scratch Used" : "Scratch"}
-            </button>
+            scratchUsed ? (
+              <p className="text-sm text-[var(--review-muted)]">
+                You&apos;ve already claimed your scratch reward.
+              </p>
+            ) : (
+              <button
+                type="button"
+                onClick={() => runGame("scratch")}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_16%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] px-4 py-2.5 text-sm font-semibold text-[var(--review-fg)] shadow-sm transition hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-fg))]"
+              >
+                Scratch
+              </button>
+            )
           ) : null}
         </div>
       </section>
 
       {open && result ? (
         <div
-          className="fixed inset-0 z-[92] flex items-center justify-center bg-zinc-950/45 px-4 backdrop-blur-[1px]"
+          className="fixed inset-0 z-[93] flex items-center justify-center bg-zinc-950/45 px-4 backdrop-blur-[1px]"
           role="dialog"
           aria-modal="true"
           onClick={() => setOpen(false)}

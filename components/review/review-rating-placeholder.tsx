@@ -8,8 +8,11 @@ import {
 } from "@/components/review/review-google-return-panel";
 import {
   getPreferredPublicUrl,
+  isSafeHttpUrl,
   shouldAllowPublicRedirect,
 } from "@/lib/review/business-config";
+import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
+import { reviewSourceLabelToScanType } from "@/lib/scan/qr-types";
 import { getReviewOptionTexts } from "@/lib/review/review-option-mock";
 import {
   persistGoogleReviewConfirmed,
@@ -59,6 +62,7 @@ export function ReviewRatingPlaceholder({
   const [clipboardWarning, setClipboardWarning] = useState(false);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const submittingRef = useRef(false);
 
   const options = rating > 0 ? getReviewOptionTexts(rating) : [];
   const trimmedReview = reviewText.trim();
@@ -92,16 +96,48 @@ export function ReviewRatingPlaceholder({
 
   const hasRating = rating > 0;
   const preferredPublic = useMemo(
-    () => getPreferredPublicUrl({ googleReviewUrl, channels }),
-    [channels, googleReviewUrl],
+    () => getPreferredPublicUrl({ googleReviewUrl, channels, directRedirect }),
+    [channels, directRedirect, googleReviewUrl],
   );
+  const safeReturnUrl = useMemo(() => {
+    const primary = preferredPublic.url && isSafeHttpUrl(preferredPublic.url)
+      ? preferredPublic.url.trim()
+      : "";
+    if (primary) return primary;
+    return isSafeHttpUrl(googleReviewUrl) ? googleReviewUrl.trim() : "";
+  }, [googleReviewUrl, preferredPublic.url]);
+
+  const outboundScanType = useMemo(
+    () => reviewSourceLabelToScanType(preferredPublic.sourceLabel),
+    [preferredPublic.sourceLabel],
+  );
+
+  const trackedSafeReturnUrl = useMemo(() => {
+    if (!safeReturnUrl || !businessId) return safeReturnUrl;
+    return buildTrackedScanOutUrl(businessId, outboundScanType, safeReturnUrl);
+  }, [businessId, outboundScanType, safeReturnUrl]);
+
   const hasAutoRedirected = useRef(false);
 
   useEffect(() => {
-    if (!directRedirect || hasAutoRedirected.current || !preferredPublic.url) return;
+    const dest = preferredPublic.url?.trim() ?? "";
+    if (
+      !directRedirect ||
+      hasAutoRedirected.current ||
+      !dest ||
+      !isSafeHttpUrl(dest) ||
+      !businessId
+    )
+      return;
     hasAutoRedirected.current = true;
-    window.location.replace(preferredPublic.url);
-  }, [directRedirect, preferredPublic.url]);
+    window.location.replace(
+      buildTrackedScanOutUrl(
+        businessId,
+        outboundScanType,
+        dest,
+      ),
+    );
+  }, [businessId, directRedirect, outboundScanType, preferredPublic.url]);
 
   const selectOption = useCallback(
     (index: number, text: string) => {
@@ -123,6 +159,7 @@ export function ReviewRatingPlaceholder({
       !submitted &&
       flow === "form" &&
       !isSubmitting &&
+      !submittingRef.current &&
       rating > 0 &&
       text.length > 0;
 
@@ -139,6 +176,7 @@ export function ReviewRatingPlaceholder({
     } else if (!hasValidContact) {
       setSubmitError("Please complete your contact details.");
     } else {
+      submittingRef.current = true;
       setSubmitError(null);
       setIsSubmitting(true);
 
@@ -194,13 +232,26 @@ export function ReviewRatingPlaceholder({
             allowLowRatingRedirect,
           );
 
-          if (!canRedirectPublicly || !preferredPublic.url) {
+          const redirectTarget =
+            preferredPublic.url && isSafeHttpUrl(preferredPublic.url)
+              ? preferredPublic.url.trim()
+              : isSafeHttpUrl(googleReviewUrl)
+                ? googleReviewUrl.trim()
+                : "";
+
+          if (!canRedirectPublicly || !redirectTarget) {
             setFlow("thanks_internal");
             return;
           }
 
           if (directRedirect) {
-            window.location.replace(preferredPublic.url);
+            window.location.replace(
+              buildTrackedScanOutUrl(
+                businessId,
+                outboundScanType,
+                redirectTarget,
+              ),
+            );
             return;
           }
 
@@ -210,12 +261,14 @@ export function ReviewRatingPlaceholder({
       } catch {
         setSubmitError("Network error. Check your connection and try again.");
       } finally {
+        submittingRef.current = false;
         setIsSubmitting(false);
       }
     }
   }, [
     allowLowRatingRedirect,
     businessId,
+    outboundScanType,
     directRedirect,
     flow,
     isSubmitting,
@@ -260,6 +313,25 @@ export function ReviewRatingPlaceholder({
   }
 
   if (flow === "return") {
+    if (!safeReturnUrl) {
+      return (
+        <section
+          className="rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
+          aria-label="Thank you"
+        >
+          <div className="rounded-2xl border border-[color-mix(in_srgb,var(--review-primary)_28%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_78%,var(--review-primary)_14%)] px-4 py-8 text-center sm:px-6 sm:py-10">
+            <p className="text-base font-semibold text-[var(--review-fg)] sm:text-lg">
+              Thank you for your feedback
+            </p>
+            <p className="mt-2 text-sm text-[var(--review-muted)]">
+              Your review has been saved. An external review link is not
+              configured for this business.
+            </p>
+          </div>
+        </section>
+      );
+    }
+
     return (
       <section
         className="rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
@@ -281,7 +353,7 @@ export function ReviewRatingPlaceholder({
 
         <ReviewGoogleReturnPanel
           phase={returnPhase}
-          reviewUrl={preferredPublic.url ?? googleReviewUrl}
+          reviewUrl={trackedSafeReturnUrl}
           reviewSourceLabel={preferredPublic.sourceLabel}
           onYes={handleReturnYes}
           onNotYet={handleReturnDefer}

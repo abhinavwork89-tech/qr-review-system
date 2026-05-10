@@ -33,9 +33,15 @@ export function ActiveReviewView({
       <ReviewDelayedModal
         googleReviewUrl={display.googleReviewUrl}
         channels={display.channels}
+        directRedirect={display.directRedirect}
+        pageSlug={slug}
       />
 
-      <ReviewMasterQrLazy slug={slug} />
+      <ReviewMasterQrLazy
+        slug={slug}
+        brandName={display.brandName}
+        logoUrl={display.logoUrl}
+      />
 
       <div className="mx-auto w-full max-w-lg flex-1 px-4 pb-8 pt-5 sm:px-5 sm:pb-10 sm:pt-6">
         <div className="flex flex-col gap-8 sm:gap-10">
@@ -55,6 +61,7 @@ export function ActiveReviewView({
 
           <section aria-label="Channels" className="w-full">
             <ReviewChannels
+              businessId={display.businessId}
               channels={display.channels}
               customerCareNumber={display.customerCareNumber}
             />

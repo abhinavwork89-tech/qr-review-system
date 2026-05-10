@@ -9,6 +9,7 @@ export function ChannelRow({
   urlId,
   url,
   onUrlChange,
+  onUrlBlur,
   enabled,
   onEnabledChange,
   urlError,
@@ -17,6 +18,7 @@ export function ChannelRow({
   urlId: string;
   url: string;
   onUrlChange: (v: string) => void;
+  onUrlBlur?: () => void;
   enabled: boolean;
   onEnabledChange: (v: boolean) => void;
   urlError?: string;
@@ -35,6 +37,7 @@ export function ChannelRow({
           type="url"
           value={url}
           onChange={(e) => onUrlChange(e.target.value)}
+          onBlur={onUrlBlur}
           placeholder="https://"
           disabled={!enabled}
           className={`${formInputBase} ${urlError ? formInputError : ""} disabled:cursor-not-allowed disabled:opacity-60`}
