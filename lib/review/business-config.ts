@@ -32,8 +32,33 @@ export function shouldAllowPublicRedirect(
   allowLowRatingRedirect: boolean,
 ): boolean {
   if (rating < 1 || rating > 5) return false;
-  if (rating >= threshold) return true;
+  const t = Number.isFinite(threshold) ? Math.round(threshold) : 4;
+  const clamped = Math.min(5, Math.max(1, t));
+  if (rating >= clamped) return true;
   return allowLowRatingRedirect;
+}
+
+/**
+ * After a successful review submit, external follow-up uses `google_url` only.
+ * Threshold + `allow_low_rating_redirect` gate whether we send the user there;
+ * social "preferred public" URLs are not used for this path.
+ */
+export function resolveGoogleReviewSubmitRedirect(input: {
+  rating: number;
+  threshold: number;
+  allowLowRatingRedirect: boolean;
+  googleReviewUrl: string;
+}): { shouldRedirect: boolean; googleUrl: string | null } {
+  const g = input.googleReviewUrl.trim();
+  if (!isSafeHttpUrl(g)) {
+    return { shouldRedirect: false, googleUrl: null };
+  }
+  const shouldRedirect = shouldAllowPublicRedirect(
+    input.rating,
+    input.threshold,
+    input.allowLowRatingRedirect,
+  );
+  return { shouldRedirect, googleUrl: shouldRedirect ? g : null };
 }
 
 export function getPrioritizedChannels(

@@ -2,9 +2,21 @@ import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 
 const BUCKET = "business-media";
-const ALLOWED_KIND = new Set(["logo", "banner", "resource", "branding"]);
-const ALLOWED_IMAGE_MIME = new Set(["image/jpeg", "image/jpg", "image/png"]);
-const ALLOWED_IMAGE_EXT = new Set([".jpg", ".jpeg", ".png"]);
+const ALLOWED_KIND = new Set([
+  "logo",
+  "banner",
+  "resource",
+  "branding",
+  "identity_proof",
+  "client_photo",
+]);
+const ALLOWED_IMAGE_MIME = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+]);
+const ALLOWED_IMAGE_EXT = new Set([".jpg", ".jpeg", ".png", ".webp"]);
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 
 export async function POST(request: Request) {
@@ -34,6 +46,18 @@ export async function POST(request: Request) {
     if (kind === "banner" && files.length > 10) {
       return NextResponse.json({ error: "Banner upload supports maximum 10 images" }, { status: 400 });
     }
+    if (kind === "identity_proof" && files.length > 10) {
+      return NextResponse.json(
+        { error: "Identity proof upload supports maximum 10 images" },
+        { status: 400 },
+      );
+    }
+    if (kind === "client_photo" && files.length > 1) {
+      return NextResponse.json(
+        { error: "Client profile photo supports single image only" },
+        { status: 400 },
+      );
+    }
 
     const supabase = createServiceRoleClient();
     await ensureBucket(supabase);
@@ -53,7 +77,9 @@ export async function POST(request: Request) {
       }
       if (!isAllowedImage(file)) {
         return NextResponse.json(
-          { error: `${file.name} has invalid type. Only JPG, JPEG, PNG allowed` },
+          {
+            error: `${file.name} has invalid type. Only JPG, JPEG, PNG, or WebP images are allowed`,
+          },
           { status: 400 },
         );
       }
@@ -174,6 +200,7 @@ function pickExtension(fileName: string, mime: string): string {
   if (m && ALLOWED_IMAGE_EXT.has(m[0]!)) return m[0]!;
 
   if (mime.includes("png")) return ".png";
+  if (mime.includes("webp")) return ".webp";
   if (mime.includes("jpeg") || mime.includes("jpg")) return ".jpg";
   return ".jpg";
 }

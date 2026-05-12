@@ -7,6 +7,7 @@ import {
 import { normalizeBusinessTypeSlug } from "@/lib/business/business-type-slug";
 import { listBusinessTypesWithUsage } from "@/lib/data/business-types-admin";
 import { requireAdminSession } from "@/lib/require-admin-session";
+import { sanitizePlainText } from "@/lib/security/input-sanitize";
 
 export async function GET() {
   const deny = await requireAdminSession();
@@ -35,7 +36,7 @@ export async function POST(request: Request) {
   }
 
   const o = json as Record<string, unknown>;
-  const name = typeof o.name === "string" ? o.name.trim() : "";
+  const name = sanitizePlainText(typeof o.name === "string" ? o.name : "", 120);
   const slugInput = typeof o.slug === "string" ? o.slug : "";
   const slug = normalizeBusinessTypeSlug(slugInput || name);
 

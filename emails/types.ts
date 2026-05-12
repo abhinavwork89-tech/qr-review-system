@@ -24,4 +24,8 @@ export type MasterEmailLayoutProps = EmailBrandContext & {
   ctaText?: string;
   ctaUrl?: string;
   qrImages?: QrImageAsset[];
+  /** When set, replaces the default "Your QR codes" heading. */
+  qrSectionHeading?: string;
+  /** Short line under the heading (e.g. scan instructions). */
+  qrSectionHint?: string;
 };

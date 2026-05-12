@@ -1,6 +1,13 @@
 const MAX_FILE_SIZE_BYTES = 5 * 1024 * 1024;
-const ALLOWED_MIME_TYPES = new Set(["image/jpeg", "image/jpg", "image/png"]);
-const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png"]);
+export const BUSINESS_IMAGE_ACCEPT =
+  ".jpg,.jpeg,.png,.webp,image/jpeg,image/png,image/webp";
+const ALLOWED_MIME_TYPES = new Set([
+  "image/jpeg",
+  "image/jpg",
+  "image/png",
+  "image/webp",
+]);
+const ALLOWED_EXTENSIONS = new Set(["jpg", "jpeg", "png", "webp"]);
 
 export type UploadValidationResult = {
   accepted: File[];
@@ -30,7 +37,7 @@ export function validateAndMergeFiles(input: {
 
   for (const file of input.incoming) {
     if (!hasValidImageType(file)) {
-      errors.push(`${file.name}: Only JPG, JPEG, PNG files are allowed`);
+      errors.push(`${file.name}: Only JPG, JPEG, PNG, or WebP images are allowed`);
       continue;
     }
     if (file.size > MAX_FILE_SIZE_BYTES) {

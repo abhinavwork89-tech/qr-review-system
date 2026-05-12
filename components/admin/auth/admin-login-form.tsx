@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
-import { flushSync } from "react-dom";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
 import { ADMIN_SESSION_LOCALSTORAGE_KEY } from "@/lib/admin-auth";
 
@@ -25,76 +24,60 @@ export function AdminLoginForm() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  /** Always clears in-flight + loading (sync DOM flush) so the button cannot stay stuck disabled. */
-  const endSubmit = () => {
-    submitInFlight.current = false;
-    flushSync(() => {
-      setLoading(false);
-    });
-  };
-
-  const handleSubmit = (ev: React.FormEvent<HTMLFormElement>) => {
+  const handleSubmit = async (ev: React.FormEvent<HTMLFormElement>) => {
     ev.preventDefault();
-    // Only guard on ref — if `loading` ever desyncs, the user must still be able to retry.
     if (submitInFlight.current) return;
 
     submitInFlight.current = true;
     setError(null);
-    flushSync(() => {
-      setLoading(true);
-    });
+    setLoading(true);
 
-    void (async () => {
-      try {
-        const res = await fetch("/api/admin/login", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, password }),
-        });
+    try {
+      const res = await fetch("/api/admin/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
 
-        const text = await res.text();
-        const result = parseLoginJsonBody(text);
+      const text = await res.text();
+      const result = parseLoginJsonBody(text);
 
-        if (!res.ok) {
-          const message =
-            typeof result === "object" &&
-            result !== null &&
-            "error" in result &&
-            typeof (result as { error?: unknown }).error === "string"
-              ? (result as { error: string }).error
-              : "Login failed";
-          flushSync(() => {
-            setError(message);
-          });
-          return;
-        }
-
-        try {
-          localStorage.setItem(ADMIN_SESSION_LOCALSTORAGE_KEY, "1");
-        } catch {
-          // ignore storage failures
-        }
-
-        router.replace("/admin/dashboard");
-        router.refresh();
-      } catch (err) {
-        const isNetwork =
-          err instanceof TypeError ||
-          (err instanceof Error &&
-            (err.message === "Failed to fetch" || err.name === "AbortError"));
-        flushSync(() => {
-          setError(
-            isNetwork
-              ? "Network error. Please try again."
-              : err instanceof Error
-                ? err.message
-                : "Something went wrong. Please try again.",
-          );
-        });
-      } finally {
-        endSubmit();
+      if (!res.ok) {
+        const message =
+          typeof result === "object" &&
+          result !== null &&
+          "error" in result &&
+          typeof (result as { error?: unknown }).error === "string"
+            ? (result as { error: string }).error
+            : "Login failed";
+        setError(message);
+        return;
       }
-    })();
+
+      try {
+        localStorage.setItem(ADMIN_SESSION_LOCALSTORAGE_KEY, "1");
+      } catch {
+        // ignore storage failures
+      }
+
+      router.replace("/admin/dashboard");
+      router.refresh();
+    } catch (err) {
+      const isNetwork =
+        err instanceof TypeError ||
+        (err instanceof Error &&
+          (err.message === "Failed to fetch" || err.name === "AbortError"));
+      setError(
+        isNetwork
+          ? "Network error. Please try again."
+          : err instanceof Error
+            ? err.message
+            : "Something went wrong. Please try again.",
+      );
+    } finally {
+      submitInFlight.current = false;
+      setLoading(false);
+    }
   };
 
   return (

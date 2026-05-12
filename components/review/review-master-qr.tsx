@@ -7,12 +7,15 @@ type ReviewMasterQrProps = {
   slug: string;
   brandName?: string;
   logoUrl?: string | null;
+  /** Tracked `/api/scan/out` URL for the master QR; must be set so scans log and redirect correctly. */
+  trackUrl: string;
 };
 
 /** Client-only (load via `next/dynamic` with `ssr: false`) so `window` is defined. */
-export default function ReviewMasterQr({ slug, brandName, logoUrl }: ReviewMasterQrProps) {
+export default function ReviewMasterQr({ slug, brandName, logoUrl, trackUrl }: ReviewMasterQrProps) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const url = `${window.location.origin}/r/${slug}`;
+  const trimmedTrack = trackUrl.trim();
+  const url = trimmedTrack.length > 0 ? trimmedTrack : "";
   const size = 200;
 
   const imageSettings =
@@ -55,21 +58,29 @@ export default function ReviewMasterQr({ slug, brandName, logoUrl }: ReviewMaste
         </p>
         <div className="mt-3 rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-white/90 p-3 shadow-sm sm:p-4">
           <div className="flex justify-center">
-            <QRCodeCanvas
-              ref={canvasRef}
-              value={url}
-              size={size}
-              marginSize={2}
-              bgColor="#ffffff"
-              fgColor="#111827"
-              imageSettings={imageSettings}
-            />
+            {url ? (
+              <QRCodeCanvas
+                ref={canvasRef}
+                value={url}
+                size={size}
+                marginSize={2}
+                bgColor="#ffffff"
+                fgColor="#111827"
+                imageSettings={imageSettings}
+              />
+            ) : (
+              <p className="max-w-[220px] px-2 py-6 text-center text-xs leading-relaxed text-[var(--review-muted)]">
+                Master QR link is not available yet. Check that this business has an
+                active master destination configured.
+              </p>
+            )}
           </div>
         </div>
         <button
           type="button"
+          disabled={!url}
           onClick={handleDownload}
-          className="mt-4 rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,transparent)] px-4 py-2.5 text-sm font-medium text-[var(--review-fg)] shadow-sm transition hover:bg-[color-mix(in_srgb,var(--review-bg)_88%,var(--review-primary)_8%)] active:scale-[0.99] sm:px-5"
+          className="mt-4 rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,transparent)] px-4 py-2.5 text-sm font-medium text-[var(--review-fg)] shadow-sm transition hover:bg-[color-mix(in_srgb,var(--review-bg)_88%,var(--review-primary)_8%)] active:scale-[0.99] enabled:cursor-pointer disabled:cursor-not-allowed disabled:opacity-45 sm:px-5"
         >
           Download QR
         </button>

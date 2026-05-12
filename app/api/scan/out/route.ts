@@ -20,7 +20,7 @@ export async function GET(request: NextRequest) {
   }
 
   const qrType = normalizeScanQrTypeParam(tRaw);
-  if (!qrType || qrType === "master") {
+  if (!qrType) {
     return NextResponse.json({ error: "Invalid QR type" }, { status: 400 });
   }
 
@@ -38,7 +38,9 @@ export async function GET(request: NextRequest) {
   const supabase = createServiceRoleClient();
   const { data: row, error: rowErr } = await supabase
     .from("businesses")
-    .select("id,status,is_active,google_url,channels,resource_urls")
+    .select(
+      "id,status,is_active,slug,google_url,channels,resource_urls,whatsapp_country_code,whatsapp_number,master_qr_type",
+    )
     .eq("id", businessId)
     .maybeSingle();
 
@@ -54,14 +56,32 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Business no longer available" }, { status: 410 });
   }
 
+  const slug = typeof (row as Record<string, unknown>).slug === "string" ? String((row as Record<string, unknown>).slug).trim() : "";
+  const reviewUrl = slug
+    ? `${request.nextUrl.origin}/r/${encodeURIComponent(slug)}`
+    : request.nextUrl.origin;
+
   const scanRow = {
     google_url:
       typeof row.google_url === "string" ? row.google_url : null,
     channels: row.channels,
     resource_urls: row.resource_urls,
+    whatsapp_country_code:
+      typeof (row as Record<string, unknown>).whatsapp_country_code === "string"
+        ? ((row as Record<string, unknown>).whatsapp_country_code as string)
+        : null,
+    whatsapp_number:
+      typeof (row as Record<string, unknown>).whatsapp_number === "string"
+        ? ((row as Record<string, unknown>).whatsapp_number as string)
+        : null,
+    slug,
+    master_qr_type:
+      typeof (row as Record<string, unknown>).master_qr_type === "string"
+        ? ((row as Record<string, unknown>).master_qr_type as string)
+        : null,
   };
 
-  if (!isScanDestinationAllowed(scanRow, qrType as ScanQrType, destination)) {
+  if (!isScanDestinationAllowed(scanRow, qrType as ScanQrType, destination, reviewUrl)) {
     return NextResponse.json({ error: "Destination not allowed" }, { status: 400 });
   }
 

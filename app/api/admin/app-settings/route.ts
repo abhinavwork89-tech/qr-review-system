@@ -2,6 +2,11 @@ import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { getAppSettingsPublic } from "@/lib/data/app-settings";
 import { requireAdminSession } from "@/lib/require-admin-session";
+import {
+  normalizeSafeHttpUrl,
+  normalizeSafeHttpsUrl,
+  sanitizePlainText,
+} from "@/lib/security/input-sanitize";
 
 function isSafeHttpUrl(value: string): boolean {
   try {
@@ -64,18 +69,28 @@ export async function PATCH(request: Request) {
     );
   }
 
-  const copyrightText =
+  const poweredByStored = normalizeSafeHttpUrl(poweredRaw);
+  if (!poweredByStored) {
+    return NextResponse.json(
+      { error: "Validation failed", fields: { poweredByUrl: "Enter a valid http(s) URL" } },
+      { status: 400 },
+    );
+  }
+
+  const copyrightRaw =
     typeof o.copyrightText === "string"
       ? o.copyrightText
       : typeof o.copyright_text === "string"
         ? o.copyright_text
         : "";
-  if (copyrightText.length > 500) {
+  if (copyrightRaw.length > 500) {
     return NextResponse.json(
       { error: "Validation failed", fields: { copyrightText: "Maximum 500 characters" } },
       { status: 400 },
     );
   }
+
+  const copyrightText = sanitizePlainText(copyrightRaw, 500);
 
   const yearRaw = o.copyrightYear ?? o.copyright_year;
   let copyrightYear: number;
@@ -121,7 +136,7 @@ export async function PATCH(request: Request) {
           { status: 400 },
         );
       } else {
-        brandingLogoUrl = t;
+        brandingLogoUrl = normalizeSafeHttpsUrl(t);
       }
     } else {
       return NextResponse.json(
@@ -134,7 +149,7 @@ export async function PATCH(request: Request) {
   const supabase = createServiceRoleClient();
   const rowPayload = {
     branding_logo_url: brandingLogoUrl,
-    powered_by_url: poweredRaw,
+    powered_by_url: poweredByStored,
     copyright_text: copyrightText,
     copyright_year: copyrightYear,
     updated_at: new Date().toISOString(),

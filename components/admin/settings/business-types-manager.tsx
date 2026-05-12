@@ -5,6 +5,7 @@ import { useCallback, useEffect, useState } from "react";
 import { normalizeBusinessTypeSlug } from "@/lib/business/business-type-slug";
 import type { BusinessTypeOption } from "@/lib/data/business-types-admin";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
+import { sanitizePlainText } from "@/lib/security/input-sanitize";
 
 type Props = {
   initialTypes: BusinessTypeOption[];
@@ -53,7 +54,7 @@ export function BusinessTypesManager({ initialTypes, loadError }: Props) {
     if (working) return;
     setFormError(null);
     const slug = normalizeBusinessTypeSlug(newSlug || newName);
-    const name = newName.trim();
+    const name = sanitizePlainText(newName, 120);
     if (!name) {
       setFormError("Name is required.");
       return;
@@ -107,7 +108,7 @@ export function BusinessTypesManager({ initialTypes, loadError }: Props) {
     if (working) return;
     if (!editingId) return;
     setFormError(null);
-    const name = editName.trim();
+    const name = sanitizePlainText(editName, 120);
     const slug = normalizeBusinessTypeSlug(editSlug);
     if (!name) {
       setFormError("Name is required.");

@@ -1,11 +1,14 @@
 import { WelcomeEmail } from "@/emails/templates/WelcomeEmail";
 import type { QrImageAsset } from "@/emails/types";
 import { getAppSettingsPublic } from "@/lib/data/app-settings";
+import { emailFlowWarn } from "@/lib/email/email-flow-log";
 import { resolveBusinessRecipient } from "@/lib/email/resolve-recipient";
 import { sanitizePrimaryColor } from "@/lib/email/sanitize-primary-color";
 import { sendAppEmail } from "@/lib/email/send-app-email";
 
 export type SendWelcomeEmailInput = {
+  /** For server logs only (e.g. business UUID). */
+  businessId?: string;
   dedupeKey?: string;
   subject?: string;
   ownerFullName: string;
@@ -24,9 +27,13 @@ export type SendWelcomeEmailInput = {
 export async function sendWelcomeEmail(input: SendWelcomeEmailInput) {
   const recipient = resolveBusinessRecipient(input.businessEmail);
   if (!recipient) {
-    console.warn(
-      "[email] skip welcome: no business email and no ADMIN_EMAIL fallback",
-    );
+    emailFlowWarn("send_skipped_no_recipient", {
+      eventTrigger: "welcome",
+      templateType: "welcome",
+      businessEmail: input.businessEmail,
+      correlationId: input.businessId ?? null,
+      reason: "No business email and no ADMIN_EMAIL fallback",
+    });
     return null;
   }
 
@@ -40,10 +47,10 @@ export async function sendWelcomeEmail(input: SendWelcomeEmailInput) {
   return sendAppEmail({
     to: recipient,
     subject,
-    businessEmail: input.businessEmail,
-    businessDisplayName: brandName,
     templateType: "welcome",
+    eventTrigger: "welcome",
     dedupeKey: input.dedupeKey,
+    correlationId: input.businessId,
     react: (
       <WelcomeEmail
         oneCoreLogoUrl={settings.brandingLogoUrl}
@@ -54,6 +61,14 @@ export async function sendWelcomeEmail(input: SendWelcomeEmailInput) {
         footerCopyrightYear={year}
         reviewPageUrl={input.reviewPageUrl}
         qrImages={input.qrImages}
+        qrSectionHeading={
+          input.qrImages.length > 0 ? `${brandName} — Master QR` : undefined
+        }
+        qrSectionHint={
+          input.qrImages.length > 0
+            ? "Scan this QR to open your review page."
+            : undefined
+        }
         previewText={input.previewText}
         greeting={input.greeting}
         title={input.title}

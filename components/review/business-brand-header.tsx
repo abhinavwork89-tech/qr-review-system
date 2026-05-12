@@ -1,15 +1,20 @@
 "use client";
 
+import type { ReactNode } from "react";
 import Image from "next/image";
 import { useState } from "react";
+import { useReviewT } from "@/components/review/review-i18n-provider";
 
 export function BusinessBrandHeader({
   name,
   logoUrl,
+  controls,
 }: {
   name: string;
   logoUrl: string | null;
+  controls?: ReactNode;
 }) {
+  const t = useReviewT();
   const [logoFailed, setLogoFailed] = useState(false);
   const showLogo = Boolean(logoUrl?.trim()) && !logoFailed;
 
@@ -40,12 +45,13 @@ export function BusinessBrandHeader({
         )}
         <div className="min-w-0 flex-1">
           <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--review-muted)] sm:text-xs">
-            Leave a review
+            {t("header.leaveReview")}
           </p>
           <h1 className="truncate text-lg font-semibold leading-snug tracking-tight text-[var(--review-fg)] sm:text-xl">
             {name}
           </h1>
         </div>
+        {controls ? <div className="shrink-0 pt-0.5">{controls}</div> : null}
       </div>
     </header>
   );

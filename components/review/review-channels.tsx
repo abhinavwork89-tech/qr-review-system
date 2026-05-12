@@ -1,25 +1,22 @@
+"use client";
+
 import {
   getPrioritizedChannels,
   isSafeHttpUrl,
 } from "@/lib/review/business-config";
 import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
 import type { BusinessChannels } from "@/lib/types/business";
+import { useReviewT } from "@/components/review/review-i18n-provider";
 
 type Props = {
   businessId: string;
   channels: BusinessChannels | null;
   customerCareNumber: string | null;
+  /** Call channel CTA; when set, used instead of legacy `customerCareNumber` tel. */
+  callTelHref: string | null;
 };
 
 type ChannelKey = "instagram" | "whatsapp" | "facebook" | "website" | "x";
-
-const LABELS: Record<ChannelKey, string> = {
-  instagram: "Instagram",
-  whatsapp: "WhatsApp",
-  facebook: "Facebook",
-  website: "Website",
-  x: "X",
-};
 
 const ICONS: Record<ChannelKey, string> = {
   instagram: "IG",
@@ -33,17 +30,24 @@ export function ReviewChannels({
   businessId,
   channels,
   customerCareNumber,
+  callTelHref,
 }: Props) {
+  const t = useReviewT();
   const prioritized = getPrioritizedChannels(channels).filter((c) =>
     isSafeHttpUrl(c.url),
   );
   const primary = prioritized[0] ?? null;
   const secondary = prioritized.slice(primary ? 1 : 0);
-  const callHref = toTelHref(customerCareNumber);
+  const callHref = callTelHref ?? toTelHref(customerCareNumber);
 
   if (!primary && secondary.length === 0 && !callHref) {
     return null;
   }
+
+  const channelLabel = (key: ChannelKey) => {
+    const path = `channels.${key}` as const;
+    return t(path);
+  };
 
   const trackHref = (key: ChannelKey, url: string) => {
     if (!businessId?.trim()) return url;
@@ -52,13 +56,14 @@ export function ReviewChannels({
 
   return (
     <section
-      aria-label="Connect with business"
+      aria-label={t("channels.sectionAria")}
       className="rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
     >
       {primary ? (
         <PrimaryChannelButton
           channelKey={primary.key}
           href={trackHref(primary.key, primary.url)}
+          openLabel={t("channels.open", { channel: channelLabel(primary.key) })}
         />
       ) : null}
 
@@ -69,6 +74,7 @@ export function ReviewChannels({
               key={`${item.key}-${item.url}`}
               channelKey={item.key}
               href={trackHref(item.key, item.url)}
+              label={channelLabel(item.key)}
             />
           ))}
         </div>
@@ -77,12 +83,13 @@ export function ReviewChannels({
       {callHref ? (
         <a
           href={callHref}
+          aria-label={t("channels.callAria")}
           className={`${
             primary || secondary.length > 0 ? "mt-3" : ""
           } flex min-h-12 items-center justify-center gap-2 rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_16%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] px-4 py-3 text-sm font-medium text-[var(--review-fg)] transition-[transform,background-color] duration-200 hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-fg))] active:scale-[0.99] motion-reduce:active:scale-100`}
         >
           <PhoneIcon className="h-4 w-4" />
-          <span>Call Us</span>
+          <span>{t("channels.call")}</span>
         </a>
       ) : null}
     </section>
@@ -92,9 +99,11 @@ export function ReviewChannels({
 function PrimaryChannelButton({
   channelKey,
   href,
+  openLabel,
 }: {
   channelKey: ChannelKey;
   href: string;
+  openLabel: string;
 }) {
   const icon = ICONS[channelKey];
   return (
@@ -110,7 +119,7 @@ function PrimaryChannelButton({
       >
         {icon}
       </span>
-      <span>{`Open ${LABELS[channelKey]}`}</span>
+      <span>{openLabel}</span>
     </a>
   );
 }
@@ -118,9 +127,11 @@ function PrimaryChannelButton({
 function ChannelButton({
   channelKey,
   href,
+  label,
 }: {
   channelKey: ChannelKey;
   href: string;
+  label: string;
 }) {
   const icon = ICONS[channelKey];
   return (
@@ -136,7 +147,7 @@ function ChannelButton({
       >
         {icon}
       </span>
-      <span>{LABELS[channelKey]}</span>
+      <span>{label}</span>
     </a>
   );
 }

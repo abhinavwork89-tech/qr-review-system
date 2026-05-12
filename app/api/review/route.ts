@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
+import { emailFlowErrorWithCause, emailFlowInfo } from "@/lib/email/email-flow-log";
 import { sendReviewEmail } from "@/lib/email/send-review-email";
 import {
   parseReviewPostBody,
@@ -79,6 +80,11 @@ export async function POST(request: Request) {
     }
 
     try {
+      emailFlowInfo("lifecycle_trigger_scheduled", {
+        eventTrigger: "review_submitted",
+        correlationId: insertedId,
+        businessId: row.business_id,
+      });
       const payload = {
         rating: row.rating,
         review_text: row.review_text,
@@ -104,11 +110,34 @@ export async function POST(request: Request) {
         primaryColor:
           typeof b.primary_color === "string" ? b.primary_color : null,
       };
-      await sendReviewEmail(payload, branding, {
+      const sendResult = await sendReviewEmail(payload, branding, {
         dedupeKey: `review_submitted:${insertedId}`,
+        correlationId: insertedId,
+      });
+      emailFlowInfo("lifecycle_trigger_finished", {
+        eventTrigger: "review_submitted",
+        correlationId: insertedId,
+        businessId: row.business_id,
+        resendMessageId:
+          sendResult && typeof sendResult === "object" && "id" in sendResult
+            ? String((sendResult as { id: unknown }).id)
+            : null,
+        outbound:
+          sendResult === null
+            ? "skipped_duplicate_or_no_recipient"
+            : "resend_accepted",
       });
     } catch (emailError) {
-      console.error("REVIEW EMAIL SEND ERROR:", emailError);
+      emailFlowErrorWithCause(
+        "review_submitted_email_failed",
+        {
+          eventTrigger: "review_submitted",
+          correlationId: insertedId,
+          businessId: row.business_id,
+          note: "Review row was saved; email send failed.",
+        },
+        emailError,
+      );
     }
 
     return NextResponse.json({ ok: true, id: insertedId }, { status: 201 });

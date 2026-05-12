@@ -6,6 +6,19 @@ import type {
   BusinessChannels,
   BusinessChannelLink,
 } from "@/lib/types/business";
+import { mergeWhatsAppUrlIntoChannels } from "@/lib/whatsapp/wa-me";
+import { buildTrackedScanOutUrl, scanTrackingPublicOrigin } from "@/lib/scan/build-tracked-out-url";
+import { isSafeHttpUrl } from "@/lib/review/business-config";
+import { buildCallTelHref } from "@/lib/call/call-channel";
+import { parsePublicResourceUrls } from "@/lib/review/parse-resource-urls";
+import { normalizeReviewLocale } from "@/lib/i18n/review-locale";
+import {
+  computeDefaultMasterQrType,
+  masterScanDestinationsMatch,
+  normalizeMasterQrType,
+  resolveMasterOutboundUrl,
+  type MasterQrType,
+} from "@/lib/scan/master-qr";
 
 export type ReviewDisplayModel = {
   /** Supabase `businesses.id` for POST /api/review */
@@ -23,10 +36,30 @@ export type ReviewDisplayModel = {
   directRedirect: boolean;
   allowLowRatingRedirect: boolean;
   customerCareNumber: string | null;
+  /** Tracked `tel:` href from Call channel when enabled + valid; takes precedence over legacy customer care. */
+  callTelHref: string | null;
   spinEnabled: boolean;
   scratchEnabled: boolean;
   rewardConfig: string[];
   channels: BusinessChannels | null;
+  /** Sanitized public HTTP(S) URLs for digital resources (images, PDFs, etc.). */
+  resourceUrls: string[];
+  /** Resolved master QR target key (stored or computed default). */
+  masterQrType: MasterQrType;
+  /** Tracked `/api/scan/out` URL for the master QR on the public review page. */
+  masterQrTrackUrl: string;
+  /**
+   * When true, `/r/[slug]` should not render the public shell: redirect straight to
+   * `masterQrTrackUrl` (HTTP 302 chain → destination) so scan_logs still record `master`.
+   */
+  directOutboundFromReviewPage: boolean;
+  /** Outbound URL before `/api/scan/out` tracking (resolved master + fallbacks). */
+  masterOutboundUrl: string;
+};
+
+export type ActiveBusinessDisplayOptions = {
+  /** Request host origin for SSR (see `getServerRequestPublicOrigin`). */
+  publicOrigin?: string | null;
 };
 
 function emptyChannel(): BusinessChannelLink {
@@ -112,16 +145,110 @@ function parseRewardConfig(raw: unknown): string[] {
 function normalizeThreshold(value: number | null | undefined): number {
   if (typeof value === "number" && Number.isFinite(value)) {
     const n = Math.round(value);
-    if (n === 3 || n === 4) return n;
+    if (n >= 1 && n <= 5) return n;
   }
   return 4;
 }
 
+export type MasterQrScanFieldsInput = {
+  id: string;
+  slug: string;
+  google_url: string | null | undefined;
+  channels: unknown;
+  whatsapp_country_code?: string | null;
+  whatsapp_number?: string | null;
+  master_qr_type?: string | null;
+};
+
+/**
+ * Master outbound + `/api/scan/out` tracking URL — same rules as the public review page.
+ * Shared with welcome email so the mailed QR matches live master QR behavior.
+ */
+export function computeMasterQrScanFields(
+  input: MasterQrScanFieldsInput,
+  origin: string,
+): {
+  effectiveMasterType: MasterQrType;
+  masterOutboundUrl: string;
+  masterQrTrackUrl: string;
+  reviewPageUrl: string;
+} {
+  const o = origin.trim().replace(/\/+$/, "");
+  const parsedChannels = parseChannels(input.channels);
+  const channelsForDisplay =
+    parsedChannels &&
+    mergeWhatsAppUrlIntoChannels(
+      parsedChannels,
+      input.whatsapp_country_code,
+      input.whatsapp_number,
+    );
+  const masterChannelsUnknown: unknown =
+    channelsForDisplay !== null && channelsForDisplay !== undefined
+      ? channelsForDisplay
+      : {};
+  const masterBase = {
+    google_url: input.google_url,
+    channels: masterChannelsUnknown,
+    whatsapp_country_code: input.whatsapp_country_code,
+    whatsapp_number: input.whatsapp_number,
+  };
+  const effectiveMasterType =
+    normalizeMasterQrType(input.master_qr_type) ?? computeDefaultMasterQrType(masterBase);
+  const slugSeg = encodeURIComponent((input.slug ?? "").trim()) || "-";
+  const reviewBase = `${o}/r/${slugSeg}`;
+  const masterOutbound = resolveMasterOutboundUrl(
+    { ...masterBase, master_qr_type: effectiveMasterType },
+    reviewBase,
+  );
+  const masterQrTrackUrl = buildTrackedScanOutUrl(
+    input.id,
+    "master",
+    masterOutbound,
+    o,
+  );
+  return {
+    effectiveMasterType,
+    masterOutboundUrl: masterOutbound,
+    masterQrTrackUrl,
+    reviewPageUrl: reviewBase,
+  };
+}
+
 export function activeBusinessToDisplay(
   business: ActiveBusiness,
+  options?: ActiveBusinessDisplayOptions,
 ): ReviewDisplayModel {
+  const origin =
+    options?.publicOrigin?.trim().replace(/\/+$/, "") || scanTrackingPublicOrigin();
   const t = resolveBusinessTheme(business);
   const parsedChannels = parseChannels(business.channels);
+  const channelsForDisplay =
+    parsedChannels &&
+    mergeWhatsAppUrlIntoChannels(
+      parsedChannels,
+      business.whatsapp_country_code,
+      business.whatsapp_number,
+    );
+  const scan = computeMasterQrScanFields(
+    {
+      id: business.id,
+      slug: business.slug,
+      google_url: business.google_url,
+      channels: business.channels,
+      whatsapp_country_code: business.whatsapp_country_code,
+      whatsapp_number: business.whatsapp_number,
+      master_qr_type: business.master_qr_type,
+    },
+    origin,
+  );
+  const effectiveMasterType = scan.effectiveMasterType;
+  const reviewBase = scan.reviewPageUrl;
+  const masterOutbound = scan.masterOutboundUrl;
+  const masterQrTrackUrl = scan.masterQrTrackUrl;
+  const directOutboundFromReviewPage =
+    business.direct_redirect === true &&
+    isSafeHttpUrl(masterOutbound) &&
+    !masterScanDestinationsMatch(masterOutbound, reviewBase);
   const brandName =
     business.brand_name?.trim() || business.name?.trim() || "Business";
   const googleReviewUrl = business.google_url?.trim() ?? "";
@@ -134,16 +261,26 @@ export function activeBusinessToDisplay(
     backgroundColor: t.background,
     foregroundColor: t.foreground,
     banners: parseBannerUrls(business.banner_urls),
-    language: business.language?.trim() || "en",
+    language: normalizeReviewLocale(business.language ?? "en"),
     googleReviewUrl,
     threshold: normalizeThreshold(business.threshold),
     directRedirect: business.direct_redirect === true,
     allowLowRatingRedirect: business.allow_low_rating_redirect === true,
     customerCareNumber: business.customer_care_number?.trim() || null,
-    spinEnabled: parsedChannels?.spin_enabled === true,
-    scratchEnabled: parsedChannels?.scratch_enabled === true,
-    rewardConfig: parsedChannels?.reward_config ?? [],
-    channels: parsedChannels,
+    callTelHref: buildCallTelHref(
+      business.call_enabled === true,
+      business.call_country_code,
+      business.call_number,
+    ),
+    spinEnabled: channelsForDisplay?.spin_enabled === true,
+    scratchEnabled: channelsForDisplay?.scratch_enabled === true,
+    rewardConfig: channelsForDisplay?.reward_config ?? [],
+    channels: channelsForDisplay,
+    masterQrType: effectiveMasterType,
+    masterQrTrackUrl,
+    directOutboundFromReviewPage,
+    masterOutboundUrl: masterOutbound,
+    resourceUrls: parsePublicResourceUrls(business.resource_urls),
   };
 }
 

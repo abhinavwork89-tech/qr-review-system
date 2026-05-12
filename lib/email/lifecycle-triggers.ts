@@ -1,4 +1,7 @@
-import type { QrImageAsset } from "@/emails/types";
+import {
+  emailFlowErrorWithCause,
+  emailFlowInfo,
+} from "@/lib/email/email-flow-log";
 import {
   sendBusinessStatusEmail,
   sendPlanExpiredEmail,
@@ -6,27 +9,8 @@ import {
 } from "@/lib/email/send-transactional-emails";
 import { sendWelcomeEmail } from "@/lib/email/send-welcome-email";
 import { buildAdminBusinessUrl, buildReviewPageUrl } from "@/lib/email/app-public-url";
+import { buildWelcomeEmailMasterQrContext } from "@/lib/email/welcome-master-qr";
 import { normalizeBusinessStatus } from "@/lib/business/status";
-
-export function resourceUrlsToQrImages(urls: unknown): QrImageAsset[] {
-  if (!Array.isArray(urls)) return [];
-  const out: QrImageAsset[] = [];
-  let i = 0;
-  for (const item of urls) {
-    if (typeof item !== "string") continue;
-    const src = item.trim();
-    if (!src) continue;
-    try {
-      const u = new URL(src);
-      if (u.protocol !== "http:" && u.protocol !== "https:") continue;
-    } catch {
-      continue;
-    }
-    i += 1;
-    out.push({ src, alt: `QR code ${i}` });
-  }
-  return out;
-}
 
 function planRank(plan: string): number {
   const t = plan.trim().toLowerCase();
@@ -50,24 +34,73 @@ export function scheduleWelcomeEmailAfterCreate(input: {
   email: string;
   logoUrl: string | null;
   primaryColor: string | null;
-  resourceUrls: unknown;
+  google_url: string | null;
+  channels: unknown;
+  whatsapp_country_code: string | null;
+  whatsapp_number: string | null;
+  master_qr_type: string | null;
 }): void {
   void (async () => {
     try {
-      await sendWelcomeEmail({
+      emailFlowInfo("lifecycle_trigger_scheduled", {
+        eventTrigger: "welcome",
+        correlationId: input.businessId,
+        slug: input.slug,
+      });
+      const brandLabel =
+        input.brandName.trim() || input.name.trim() || "Your business";
+      const { qrImages, debug } = buildWelcomeEmailMasterQrContext({
+        businessId: input.businessId,
+        slug: input.slug,
+        brandName: brandLabel,
+        google_url: input.google_url,
+        channels: input.channels,
+        whatsapp_country_code: input.whatsapp_country_code,
+        whatsapp_number: input.whatsapp_number,
+        master_qr_type: input.master_qr_type,
+      });
+      emailFlowInfo("welcome_email_qr_resolved", {
+        eventTrigger: "welcome",
+        correlationId: input.businessId,
+        resolvedQrSource: debug.payloadSource,
+        master_qr_type: debug.master_qr_type,
+        finalQrImageUrl: debug.finalQrImageUrl,
+        finalQrPayload: debug.finalQrPayload,
+        masterTrackUrl: debug.masterTrackUrl,
+        resolvedScanOutbound: debug.resolvedScanOutbound,
+        emailTemplatePayload: {
+          qrImageCount: qrImages.length,
+          reviewPageUrl: buildReviewPageUrl(input.slug),
+        },
+      });
+      const sendResult = await sendWelcomeEmail({
+        businessId: input.businessId,
         dedupeKey: `welcome:${input.businessId}`,
         ownerFullName: input.name.trim() || "there",
-        brandName: input.brandName.trim() || input.name.trim() || "Your business",
+        brandName: brandLabel,
         businessEmail: input.email.trim() || null,
         clientLogoUrl: input.logoUrl,
         primaryColor: input.primaryColor,
         reviewPageUrl: buildReviewPageUrl(input.slug),
-        qrImages: resourceUrlsToQrImages(input.resourceUrls),
+        qrImages,
+      });
+      emailFlowInfo("lifecycle_trigger_finished", {
+        eventTrigger: "welcome",
+        correlationId: input.businessId,
+        resendMessageId:
+          sendResult && typeof sendResult === "object" && "id" in sendResult
+            ? String((sendResult as { id: unknown }).id)
+            : null,
+        outbound:
+          sendResult === null
+            ? "skipped_duplicate_or_no_recipient"
+            : "resend_accepted",
       });
     } catch (err) {
-      console.error(
-        "[email] welcome lifecycle error",
-        err instanceof Error ? err.message : String(err),
+      emailFlowErrorWithCause(
+        "lifecycle_trigger_failed",
+        { eventTrigger: "welcome", correlationId: input.businessId },
+        err,
       );
     }
   })();
@@ -147,36 +180,98 @@ export function schedulePatchLifecycleEmails(input: {
         const oldR = planRank(oldPlan);
         const newR = planRank(newPlan);
         if (newR > oldR) {
-          await sendPlanRenewedEmail({
+          emailFlowInfo("lifecycle_trigger_scheduled", {
+            eventTrigger: "plan_renewed",
+            correlationId: input.businessId,
+            oldPlan,
+            newPlan,
+          });
+          const renewedResult = await sendPlanRenewedEmail({
             ...brand,
+            correlationId: input.businessId,
             dedupeKey: `plan_renewed:${input.businessId}:${newPlan}`,
             planName: formatPlanLabel(newPlan),
             renewedOn: new Date().toISOString().slice(0, 10),
             dashboardUrl,
           });
+          emailFlowInfo("lifecycle_trigger_finished", {
+            eventTrigger: "plan_renewed",
+            correlationId: input.businessId,
+            resendMessageId:
+              renewedResult &&
+              typeof renewedResult === "object" &&
+              "id" in renewedResult
+                ? String((renewedResult as { id: unknown }).id)
+                : null,
+            outbound:
+              renewedResult === null
+                ? "skipped_duplicate_or_no_recipient"
+                : "resend_accepted",
+          });
         } else if (newR < oldR && oldR > 0) {
-          await sendPlanExpiredEmail({
+          emailFlowInfo("lifecycle_trigger_scheduled", {
+            eventTrigger: "plan_expired",
+            correlationId: input.businessId,
+            oldPlan,
+            newPlan,
+          });
+          const expiredResult = await sendPlanExpiredEmail({
             ...brand,
+            correlationId: input.businessId,
             dedupeKey: `plan_expired:${input.businessId}:${newPlan}`,
             planName: formatPlanLabel(oldPlan || newPlan),
             expiredOn: new Date().toISOString().slice(0, 10),
             renewUrl: dashboardUrl,
           });
+          emailFlowInfo("lifecycle_trigger_finished", {
+            eventTrigger: "plan_expired",
+            correlationId: input.businessId,
+            resendMessageId:
+              expiredResult &&
+              typeof expiredResult === "object" &&
+              "id" in expiredResult
+                ? String((expiredResult as { id: unknown }).id)
+                : null,
+            outbound:
+              expiredResult === null
+                ? "skipped_duplicate_or_no_recipient"
+                : "resend_accepted",
+          });
         }
       }
 
       if (newStatus !== oldStatus && (newStatus === "active" || newStatus === "inactive")) {
-        await sendBusinessStatusEmail({
+        emailFlowInfo("lifecycle_trigger_scheduled", {
+          eventTrigger: "business_status",
+          correlationId: input.businessId,
+          oldStatus,
+          newStatus,
+        });
+        const statusResult = await sendBusinessStatusEmail({
           ...brand,
+          correlationId: input.businessId,
           dedupeKey: `business_status:${input.businessId}:${oldStatus}->${newStatus}`,
           status: newStatus,
           dashboardUrl,
         });
+        emailFlowInfo("lifecycle_trigger_finished", {
+          eventTrigger: "business_status",
+          correlationId: input.businessId,
+          resendMessageId:
+            statusResult && typeof statusResult === "object" && "id" in statusResult
+              ? String((statusResult as { id: unknown }).id)
+              : null,
+          outbound:
+            statusResult === null
+              ? "skipped_duplicate_or_no_recipient"
+              : "resend_accepted",
+        });
       }
     } catch (err) {
-      console.error(
-        "[email] patch lifecycle error",
-        err instanceof Error ? err.message : String(err),
+      emailFlowErrorWithCause(
+        "lifecycle_patch_emails_failed",
+        { correlationId: input.businessId, oldStatus, newStatus, oldPlan, newPlan },
+        err,
       );
     }
   })();

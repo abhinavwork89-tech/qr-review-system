@@ -1,6 +1,7 @@
 import { createElement } from "react";
 import { ReviewSubmittedEmail } from "@/emails/templates/ReviewSubmittedEmail";
 import { getAppSettingsPublic } from "@/lib/data/app-settings";
+import { emailFlowWarn } from "@/lib/email/email-flow-log";
 import { resolveBusinessRecipient } from "@/lib/email/resolve-recipient";
 import { sanitizePrimaryColor } from "@/lib/email/sanitize-primary-color";
 import { sendAppEmail } from "@/lib/email/send-app-email";
@@ -24,13 +25,17 @@ export type SendReviewEmailBranding = {
 export async function sendReviewEmail(
   data: SendReviewEmailInput,
   branding: SendReviewEmailBranding,
-  options?: { dedupeKey?: string },
+  options?: { dedupeKey?: string; correlationId?: string },
 ) {
   const recipient = resolveBusinessRecipient(branding.businessEmail);
   if (!recipient) {
-    console.warn(
-      "[email] skip review_submitted: no business email and no ADMIN_EMAIL fallback",
-    );
+    emailFlowWarn("send_skipped_no_recipient", {
+      eventTrigger: "review_submitted",
+      templateType: "review_submitted",
+      businessEmail: branding.businessEmail,
+      correlationId: options?.correlationId ?? null,
+      reason: "No business email and no ADMIN_EMAIL fallback",
+    });
     return null;
   }
 
@@ -44,11 +49,11 @@ export async function sendReviewEmail(
   return sendAppEmail({
     to: recipient,
     subject,
-    businessEmail: branding.businessEmail,
-    businessDisplayName: brandLabel,
     replyTo: data.email?.trim() || undefined,
     templateType: "review_submitted",
+    eventTrigger: "review_submitted",
     dedupeKey: options?.dedupeKey,
+    correlationId: options?.correlationId,
     react: createElement(ReviewSubmittedEmail, {
       oneCoreLogoUrl: settings.brandingLogoUrl,
       clientBrandLogoUrl: branding.clientLogoUrl,

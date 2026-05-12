@@ -2,6 +2,7 @@ import { cache } from "react";
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
+import { normalizeMasterQrType } from "@/lib/scan/master-qr";
 import type {
   ActiveBusiness,
   BusinessRow,
@@ -84,8 +85,15 @@ function coerceBusinessRow(raw: Record<string, unknown>): BusinessRow {
       raw.allow_low_rating_redirect,
     ),
     customer_care_number: readNullableString(raw.customer_care_number),
+    whatsapp_country_code: readNullableString(raw.whatsapp_country_code),
+    whatsapp_number: readNullableString(raw.whatsapp_number),
+    call_enabled: readNullableBoolean(raw.call_enabled),
+    call_country_code: readNullableString(raw.call_country_code),
+    call_number: readNullableString(raw.call_number),
     channels: raw.channels,
     banner_urls: bannerRaw,
+    resource_urls: raw.resource_urls,
+    master_qr_type: normalizeMasterQrType(raw.master_qr_type),
   };
 }
 

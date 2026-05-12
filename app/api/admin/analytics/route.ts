@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { buildAnalyticsTrendSeries } from "@/lib/admin/analytics-trend";
 import { normalizeBusinessStatus } from "@/lib/business/status";
 import { requireAdminSession } from "@/lib/require-admin-session";
 
@@ -11,13 +12,15 @@ function parseDays(raw: string | null): AnalyticsRangeDays {
   return 30;
 }
 
+/** Start of UTC window aligned with trend buckets (today | last N calendar days). */
 function rangeStartIso(days: AnalyticsRangeDays): string {
+  const d = new Date();
+  d.setUTCHours(0, 0, 0, 0);
   if (days === 1) {
-    const d = new Date();
-    d.setUTCHours(0, 0, 0, 0);
     return d.toISOString();
   }
-  return new Date(Date.now() - days * 86_400_000).toISOString();
+  d.setUTCDate(d.getUTCDate() - (days - 1));
+  return d.toISOString();
 }
 
 export async function GET(request: Request) {
@@ -170,6 +173,13 @@ export async function GET(request: Request) {
       };
     });
 
+    const { granularity: trendGranularity, series: trendSeries } =
+      buildAnalyticsTrendSeries({
+        days,
+        scans: scanList,
+        reviews: reviewList,
+      });
+
     return NextResponse.json(
       {
         days,
@@ -183,6 +193,8 @@ export async function GET(request: Request) {
         recentScans,
         recentReviews,
         businessStats,
+        trendGranularity,
+        trendSeries,
       },
       { status: 200 },
     );

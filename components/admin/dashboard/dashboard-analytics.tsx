@@ -9,6 +9,10 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ChartCard } from "@/components/admin/dashboard/chart-card";
+import {
+  DashboardTrendChart,
+  type TrendGranularity,
+} from "@/components/admin/dashboard/dashboard-trend-chart";
 import { StatsCard } from "@/components/admin/dashboard/stats-card";
 import { displayQrTypeLabel } from "@/lib/scan/qr-types";
 
@@ -46,6 +50,8 @@ type AnalyticsJson = {
     scans: number;
     reviews: number;
   }>;
+  trendGranularity?: TrendGranularity;
+  trendSeries?: unknown;
 };
 
 const RANGE_OPTIONS: { days: RangeDays; label: string }[] = [
@@ -61,6 +67,10 @@ function formatNumber(value: number): string {
 function formatPercent(value: number): string {
   if (!Number.isFinite(value)) return "0.00";
   return value.toFixed(2);
+}
+
+function normalizeTrendGranularity(raw: unknown): TrendGranularity {
+  return raw === "hour" ? "hour" : "day";
 }
 
 function formatShortDate(iso: string): string {
@@ -201,7 +211,14 @@ export function DashboardAnalytics() {
     : [];
 
   const businessRows = data?.businessStats ?? [];
-  const HAS_CHART_DATA = businessRows.length > 0;
+  const hasBusinessStatsRows = businessRows.length > 0;
+
+  const trendGranularity = useMemo(
+    () => normalizeTrendGranularity(data?.trendGranularity),
+    [data?.trendGranularity],
+  );
+
+  const trendCardReady = !error && (loading || data != null);
 
   return (
     <div className="space-y-6">
@@ -365,7 +382,7 @@ export function DashboardAnalytics() {
         <ChartCard
           title="Business Types"
           subtitle="Per business scan and review totals (period)"
-          hasData={HAS_CHART_DATA}
+          hasData={hasBusinessStatsRows}
         >
           <div className="h-64 overflow-auto rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
             <div className="space-y-2">
@@ -391,46 +408,20 @@ export function DashboardAnalytics() {
       </div>
 
       <ChartCard
-        title="Trend"
-        subtitle="Placeholder chart (numeric data is scoped above)"
-        hasData={HAS_CHART_DATA}
+        title="Activity trend"
+        subtitle={`QR scans vs reviews from scan_logs & reviews · UTC · ${rangeLabel}${
+          trendGranularity === "hour"
+            ? " · hourly buckets"
+            : " · daily buckets"
+        }`}
+        hasData={trendCardReady}
       >
-        <div className="h-64 rounded-xl border border-zinc-200/80 bg-gradient-to-b from-indigo-50/40 to-white p-4 dark:border-zinc-800 dark:from-zinc-900 dark:to-zinc-900">
-          <div className="relative h-full w-full">
-            <div className="absolute inset-0 grid grid-rows-4 gap-4">
-              {[0, 1, 2, 3].map((row) => (
-                <div
-                  key={row}
-                  className="border-b border-dashed border-zinc-200 dark:border-zinc-800"
-                />
-              ))}
-            </div>
-            <svg
-              viewBox="0 0 400 160"
-              className="relative z-10 h-full w-full"
-              preserveAspectRatio="none"
-              aria-label="Line chart placeholder"
-            >
-              <defs>
-                <linearGradient id="lineFillDash" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="rgb(99 102 241 / 0.25)" />
-                  <stop offset="100%" stopColor="rgb(99 102 241 / 0.02)" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M0,122 C40,118 55,94 92,98 C120,101 150,126 180,114 C214,100 236,50 274,58 C304,64 332,93 358,88 C376,84 388,64 400,56 L400,160 L0,160 Z"
-                fill="url(#lineFillDash)"
-              />
-              <path
-                d="M0,122 C40,118 55,94 92,98 C120,101 150,126 180,114 C214,100 236,50 274,58 C304,64 332,93 358,88 C376,84 388,64 400,56"
-                fill="none"
-                stroke="rgb(79 70 229)"
-                strokeWidth="3"
-                strokeLinecap="round"
-              />
-            </svg>
-          </div>
-        </div>
+        <DashboardTrendChart
+          granularity={trendGranularity}
+          series={data?.trendSeries}
+          loading={loading}
+          rangeLabel={rangeLabel}
+        />
       </ChartCard>
     </div>
   );

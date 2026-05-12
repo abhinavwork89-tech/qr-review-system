@@ -1,11 +1,14 @@
+import { translateReview } from "@/lib/i18n/review-messages";
+
 export default function ReviewPageLoading() {
+  const loading = translateReview("en", "loading.srOnly");
   return (
     <div
       className="flex min-h-full flex-1 flex-col bg-zinc-50"
       aria-busy="true"
       aria-live="polite"
     >
-      <span className="sr-only">Loading review page…</span>
+      <span className="sr-only">{loading}</span>
       <div className="border-b border-zinc-200 bg-white">
         <div className="mx-auto flex max-w-lg items-center gap-4 px-4 py-5">
           <div className="h-14 w-14 shrink-0 animate-pulse rounded-xl bg-zinc-200" />

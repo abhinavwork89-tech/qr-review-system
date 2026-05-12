@@ -1,9 +1,21 @@
 ﻿import { notFound } from "next/navigation";
 import { BusinessDetailEditor } from "@/components/admin/business/business-detail-editor";
 import { normalizeBusinessStatus } from "@/lib/business/status";
+import {
+  isAllowedIdentityTypeSlug,
+  parseIdentityTypeInput,
+} from "@/lib/business/identity";
 import { mergeBusinessTypeCatalogWithInUseSlugs } from "@/lib/admin/business-type-display";
 import { listBusinessTypeSelectOptions } from "@/lib/data/business-types-admin";
 import { createServiceRoleClient } from "@/lib/supabase/server";
+import { DEFAULT_DIAL_CODE, normalizeDialCode } from "@/lib/phone/mobile";
+import { clampWhatsAppLocalInput, tryInferWhatsAppPartsFromLegacyUrl } from "@/lib/whatsapp/wa-me";
+import { clampCallLocalInput } from "@/lib/call/call-channel";
+import {
+  computeDefaultMasterQrType,
+  normalizeMasterQrType,
+  type MasterQrType,
+} from "@/lib/scan/master-qr";
 
 type PageProps = {
   params: Promise<{ id: string }>;
@@ -57,6 +69,37 @@ export default async function BusinessDetailPage({ params, searchParams }: PageP
   const channels = asObject(row.channels);
   const rewardConfig = asStringArray(channels.reward_config).join("\n");
   const currentBusinessType = asString(row.business_type);
+  const waChannel = readChannel(channels.whatsapp);
+  const storedWaCc =
+    typeof row.whatsapp_country_code === "string" ? row.whatsapp_country_code.trim() : "";
+  const storedWaNum =
+    typeof row.whatsapp_number === "string"
+      ? clampWhatsAppLocalInput(row.whatsapp_number)
+      : "";
+  const inferredWa =
+    !storedWaCc && !storedWaNum && waChannel.url.trim()
+      ? tryInferWhatsAppPartsFromLegacyUrl(waChannel.url)
+      : null;
+  const masterQrType: MasterQrType =
+    normalizeMasterQrType(
+      typeof row.master_qr_type === "string" ? row.master_qr_type : null,
+    ) ??
+    computeDefaultMasterQrType({
+      google_url: asString(row.google_url) || null,
+      channels,
+      whatsapp_country_code: waChannel.enabled
+        ? (inferredWa?.dialCode || storedWaCc || DEFAULT_DIAL_CODE)
+        : null,
+      whatsapp_number: waChannel.enabled
+        ? clampWhatsAppLocalInput(inferredWa?.localNumber || storedWaNum || "")
+        : null,
+    });
+  const identityTypeSlug = parseIdentityTypeInput(
+    typeof row.identity_type === "string" ? row.identity_type : "",
+  );
+  const identityTypeInitial = isAllowedIdentityTypeSlug(identityTypeSlug)
+    ? identityTypeSlug
+    : "aadhaar";
   const { options: catalogTypeOptions } = await listBusinessTypeSelectOptions();
   const businessTypeOptions = mergeBusinessTypeCatalogWithInUseSlugs(
     catalogTypeOptions,
@@ -106,6 +149,30 @@ export default async function BusinessDetailPage({ params, searchParams }: PageP
               : channels.twitter,
           ),
         },
+        whatsappCountryCode: inferredWa?.dialCode || storedWaCc || DEFAULT_DIAL_CODE,
+        whatsappNumber: clampWhatsAppLocalInput(inferredWa?.localNumber || storedWaNum || ""),
+        callEnabled: row.call_enabled === true,
+        callCountryCode: normalizeDialCode(
+          (() => {
+            const raw =
+              typeof row.call_country_code === "string" ? row.call_country_code.trim() : "";
+            const d = raw.replace(/\D/g, "");
+            return d ? `+${d}` : "+91";
+          })(),
+        ),
+        callNumber: clampCallLocalInput(
+          typeof row.call_number === "string" ? row.call_number : "",
+        ),
+        masterQrType,
+        identityType:
+          typeof row.identity_type === "string" && row.identity_type.trim()
+            ? identityTypeInitial
+            : "aadhaar",
+        identityNumber:
+          typeof row.identity_number === "string" ? row.identity_number.trim() : "",
+        identityProofUrls: asIdentityProofUrls(row.identity_proof_urls),
+        clientPhotoUrl:
+          typeof row.client_photo_url === "string" ? row.client_photo_url.trim() : "",
       }}
     />
   );
@@ -122,6 +189,12 @@ function asBoolean(v: unknown): boolean {
 function asStringArray(v: unknown): string[] {
   if (!Array.isArray(v)) return [];
   return v.filter((item): item is string => typeof item === "string");
+}
+
+function asIdentityProofUrls(v: unknown): string[] {
+  return asStringArray(v)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0);
 }
 
 function asObject(v: unknown): Record<string, unknown> {

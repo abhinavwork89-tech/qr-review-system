@@ -4,15 +4,10 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AppSettingsPublic } from "@/lib/data/app-settings";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
-
-function isSafeHttpUrl(value: string): boolean {
-  try {
-    const u = new URL(value.trim());
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
+import {
+  normalizeSafeHttpUrl,
+  sanitizePlainText,
+} from "@/lib/security/input-sanitize";
 
 async function uploadBrandingLogo(file: File): Promise<string> {
   const form = new FormData();
@@ -105,7 +100,8 @@ export function BrandingSettingsSection({ initial }: Props) {
     setSuccess(false);
 
     const powered = poweredByUrl.trim();
-    if (!powered || !isSafeHttpUrl(powered)) {
+    const normalizedPowered = normalizeSafeHttpUrl(powered);
+    if (!normalizedPowered) {
       setError("Powered-by URL must be a valid http(s) link.");
       return;
     }
@@ -130,12 +126,14 @@ export function BrandingSettingsSection({ initial }: Props) {
         setPendingFile(null);
       }
 
+      const safeCopyright = sanitizePlainText(copyrightText, 500);
+
       const res = await fetch("/api/admin/app-settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          poweredByUrl: powered,
-          copyrightText,
+          poweredByUrl: normalizedPowered,
+          copyrightText: safeCopyright,
           copyrightYear: year,
           brandingLogoUrl: logoUrl,
         }),
