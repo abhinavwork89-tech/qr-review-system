@@ -1,6 +1,15 @@
 "use client";
 
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MouseEvent,
+} from "react";
 import { StarRating } from "@/components/star-rating";
 import {
   ReviewGoogleReturnPanel,
@@ -20,6 +29,7 @@ import {
   sanitizePhoneLocalInput,
   validateInternationalPhone,
 } from "@/lib/phone/mobile";
+import { aiReviewDebug } from "@/lib/review/ai-review-debug";
 import {
   persistGoogleReviewConfirmed,
   persistReviewSubmission,
@@ -42,6 +52,17 @@ import {
   optionalNameValidationMessageKey,
   normalizeReviewEmailInput,
 } from "@/lib/review/review-contact-validation";
+import { useAiReviewSuggestions } from "@/components/review/use-ai-review-suggestions";
+import { ReviewAiSuggestionSkeleton } from "@/components/review/review-ai-suggestion-skeleton";
+import type { AiReviewLanguage } from "@/lib/ai/constants";
+import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
+
+const suggestionBtnClass = (selected: boolean) =>
+  `w-full rounded-xl border px-4 py-3.5 text-left text-sm leading-snug transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out motion-reduce:transition-none active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 sm:py-4 ${
+    selected
+      ? "border-[var(--review-primary)] bg-[color-mix(in_srgb,var(--review-bg)_82%,var(--review-primary)_12%)] shadow-[0_0_0_2px_var(--review-primary)]"
+      : "border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] hover:border-[color-mix(in_srgb,var(--review-primary)_45%,transparent)] hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-primary)_6%)]"
+  } text-[var(--review-fg)]`;
 
 export type ReviewRatingPlaceholderProps = {
   businessId: string;
@@ -52,6 +73,12 @@ export type ReviewRatingPlaceholderProps = {
   allowLowRatingRedirect: boolean;
   channels: BusinessChannels | null;
   onRatingChange?: (rating: number) => void;
+  /** Server flag: business + global AI allow POST /api/ai/generate-review */
+  aiReviewGenerationEnabled?: boolean;
+  /** Language for AI API (business AI setting); must match server. */
+  aiGenerateLanguage?: AiReviewLanguage;
+  /** Expected AI suggestion count from plan (1 / 3 / 5). */
+  aiSuggestionCount?: number;
 };
 
 type FlowView = "form" | "return" | "thanks_internal";
@@ -67,6 +94,9 @@ export function ReviewRatingPlaceholder({
   allowLowRatingRedirect,
   channels,
   onRatingChange,
+  aiReviewGenerationEnabled = false,
+  aiGenerateLanguage = "en",
+  aiSuggestionCount = 3,
 }: ReviewRatingPlaceholderProps) {
   const { locale, t } = useReviewI18n();
   const id = useId();
@@ -93,11 +123,146 @@ export function ReviewRatingPlaceholder({
   const [submitAttempted, setSubmitAttempted] = useState(false);
   const [copyToastVisible, setCopyToastVisible] = useState(false);
   const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [googleRedirectHold, setGoogleRedirectHold] = useState<{
+    url: string;
+    redirectAt: number;
+  } | null>(null);
+  const [redirectSecondsLeft, setRedirectSecondsLeft] = useState(0);
+  const redirectNavStartedRef = useRef(false);
 
-  const options = useMemo(
+  useBodyScrollLock(Boolean(googleRedirectHold));
+
+  const staticSuggestions = useMemo(
     () => (rating > 0 ? getReviewSuggestionTexts(locale, rating) : []),
     [locale, rating],
   );
+
+  const aiSuggest = useAiReviewSuggestions({
+    enabled: aiReviewGenerationEnabled,
+    businessId,
+    rating,
+    apiLanguage: aiGenerateLanguage,
+    expectedSuggestionCount: aiSuggestionCount,
+  });
+
+  const displayCardTexts = useMemo(() => {
+    if (!aiReviewGenerationEnabled) return staticSuggestions;
+    if (aiSuggest.phase === "success" && aiSuggest.suggestions.length > 0) {
+      return aiSuggest.suggestions;
+    }
+    if (aiSuggest.useStaticFallback) return staticSuggestions;
+    return [];
+  }, [
+    aiReviewGenerationEnabled,
+    aiSuggest.phase,
+    aiSuggest.suggestions,
+    aiSuggest.useStaticFallback,
+    staticSuggestions,
+  ]);
+
+  const skeletonRows = Math.min(5, Math.max(1, Math.floor(aiSuggestionCount)));
+  const showAiSuggestionSkeleton =
+    aiReviewGenerationEnabled &&
+    rating > 0 &&
+    (aiSuggest.phase === "debouncing" || aiSuggest.phase === "fetching");
+
+  const effectiveSelectedIndex =
+    selectedIndex !== null &&
+    selectedIndex >= 0 &&
+    selectedIndex < displayCardTexts.length
+      ? selectedIndex
+      : null;
+
+  const showingAiCards =
+    aiReviewGenerationEnabled &&
+    aiSuggest.phase === "success" &&
+    aiSuggest.suggestions.length > 0;
+
+  const lastShowingAiRef = useRef(false);
+  useEffect(() => {
+    if (showingAiCards && !lastShowingAiRef.current) {
+      setSelectedIndex(null);
+    }
+    lastShowingAiRef.current = showingAiCards;
+  }, [showingAiCards]);
+
+  const optionsTitle = aiReviewGenerationEnabled
+    ? t("rating.aiSuggestedTitle")
+    : t("rating.suggestedWording");
+  const optionsHint = aiReviewGenerationEnabled
+    ? t("rating.aiSuggestedHint")
+    : t("rating.suggestedHint");
+
+  const aiNotice = useMemo(() => {
+    if (!aiReviewGenerationEnabled) return null;
+    if (aiSuggest.phase !== "error") return null;
+    if (aiSuggest.errorCode === "rate_limited") return t("rating.aiRateLimited");
+    if (aiSuggest.errorCode === "ai_unavailable" || aiSuggest.errorCode === "invalid_business") {
+      return t("rating.aiUnavailable");
+    }
+    if (aiSuggest.errorCode === "empty") return t("rating.aiEmptyFallback");
+    return t("rating.aiLoadFailed");
+  }, [aiReviewGenerationEnabled, aiSuggest.errorCode, aiSuggest.phase, t]);
+
+  const aiLoadingBlock =
+    aiReviewGenerationEnabled &&
+    rating > 0 &&
+    (aiSuggest.phase === "debouncing" || aiSuggest.phase === "fetching");
+
+  useEffect(() => {
+    aiReviewDebug("ui:render", {
+      aiReviewGenerationEnabled,
+      rating,
+      phase: aiSuggest.phase,
+      suggestionCount: aiSuggest.suggestions.length,
+      displayCardCount: displayCardTexts.length,
+      showingAiCards,
+      aiLoadingBlock,
+      aiNotice: aiNotice ?? null,
+      errorCode: aiSuggest.errorCode,
+      wasCached: aiSuggest.wasCached,
+      aiSuggestionCount,
+    });
+  }, [
+    aiReviewGenerationEnabled,
+    rating,
+    aiSuggest.phase,
+    aiSuggest.suggestions.length,
+    displayCardTexts.length,
+    showingAiCards,
+    aiLoadingBlock,
+    aiNotice,
+    aiSuggest.errorCode,
+    aiSuggest.wasCached,
+    aiSuggestionCount,
+  ]);
+
+  useEffect(() => {
+    if (!googleRedirectHold) {
+      redirectNavStartedRef.current = false;
+      const clearId = window.setTimeout(() => setRedirectSecondsLeft(0), 0);
+      return () => window.clearTimeout(clearId);
+    }
+    redirectNavStartedRef.current = false;
+    const hold = googleRedirectHold;
+    const tick = () => {
+      setRedirectSecondsLeft(
+        Math.max(0, Math.ceil((hold.redirectAt - Date.now()) / 1000)),
+      );
+      if (redirectNavStartedRef.current) return;
+      if (Date.now() >= hold.redirectAt) {
+        redirectNavStartedRef.current = true;
+        try {
+          window.location.href = hold.url;
+        } catch {
+          redirectNavStartedRef.current = false;
+        }
+      }
+    };
+    tick();
+    const id = window.setInterval(tick, 250);
+    return () => window.clearInterval(id);
+  }, [googleRedirectHold]);
   const trimmedReview = reviewText.trim();
   const mobileLocalDigits = useMemo(
     () => sanitizePhoneLocalInput(mobileNumber),
@@ -149,6 +314,11 @@ export function ReviewRatingPlaceholder({
 
   const handleRatingChange = useCallback(
     (next: number) => {
+      aiReviewDebug("ui:rating", {
+        next,
+        aiReviewGenerationEnabled,
+        aiSuggestionCount,
+      });
       setSelectedIndex(null);
       setReviewText("");
       setSubmitted(false);
@@ -156,6 +326,7 @@ export function ReviewRatingPlaceholder({
       setSubmitError(null);
       setSubmitAttempted(false);
       setFieldTouched({ name: false, email: false, mobile: false });
+      setGoogleRedirectHold(null);
       setRating(next);
       onRatingChange?.(next);
     },
@@ -245,6 +416,18 @@ export function ReviewRatingPlaceholder({
     [flow, isSubmitting, submitted],
   );
 
+  const handleSuggestionPick = useCallback(
+    (e: MouseEvent<HTMLButtonElement>) => {
+      if (submitted || flow !== "form" || isSubmitting) return;
+      const idx = Number.parseInt(e.currentTarget.dataset.idx ?? "", 10);
+      if (!Number.isFinite(idx) || idx < 0) return;
+      const text = displayCardTexts[idx];
+      if (typeof text !== "string") return;
+      selectOption(idx, text);
+    },
+    [displayCardTexts, flow, isSubmitting, selectOption, submitted],
+  );
+
   const handleSubmit = useCallback(async () => {
     const text = reviewText.trim();
     setSubmitAttempted(true);
@@ -290,7 +473,6 @@ export function ReviewRatingPlaceholder({
     setSubmitError(null);
     setIsSubmitting(true);
 
-    let scheduledHardRedirect = false;
     try {
       const trimmedName = name.trim();
       const normalizedEmail = normalizeReviewEmailInput(email);
@@ -333,132 +515,100 @@ export function ReviewRatingPlaceholder({
         setSubmitted(true);
         setClipboardWarning(false);
 
-        void navigator.clipboard
-          .writeText(safeReview)
-          .then(() => {
-            showCopySuccessToast();
-          })
-          .catch(() => {
-            setClipboardWarning(true);
-            console.warn(
-              "Clipboard unavailable; review text was not copied automatically.",
-            );
+        const { shouldRedirect: canRedirectPublicly, googleUrl } =
+          resolveGoogleReviewSubmitRedirect({
+            rating,
+            threshold,
+            allowLowRatingRedirect,
+            googleReviewUrl,
           });
 
-        const { shouldRedirect: canRedirectPublicly, googleUrl } =
-            resolveGoogleReviewSubmitRedirect({
-              rating,
-              threshold,
-              allowLowRatingRedirect,
-              googleReviewUrl,
-            });
+        const willRedirect = Boolean(
+          canRedirectPublicly &&
+            googleUrl &&
+            isSafeHttpUrl((googleUrl as string).trim()),
+        );
 
-          if (!canRedirectPublicly || !googleUrl) {
-            if (reviewRedirectDebug) {
-              console.info("[review-redirect]", {
-                eligible: false,
-                rating,
-                threshold,
-                allow_low_rating_redirect: allowLowRatingRedirect,
-                finalUrl: googleUrl,
-                redirectBlockedReason: !canRedirectPublicly
-                  ? "policy_or_invalid_url"
-                  : "no_google_url",
-                currentRoute:
-                  typeof window !== "undefined" ? window.location.href : "",
-                rewardModalOpen:
-                  typeof document !== "undefined"
-                    ? document.body?.dataset?.reviewRewardModalOpen
-                    : undefined,
-                loadingState: { isSubmitting: true },
-              });
-            }
-            setFlow("thanks_internal");
-            return;
-          }
-
-          const trackedGoogle = buildTrackedScanOutUrl(
-            businessId,
-            "google",
-            googleUrl,
+        void navigator.clipboard.writeText(safeReview).then(() => {
+          if (!willRedirect) showCopySuccessToast();
+        }).catch(() => {
+          setClipboardWarning(true);
+          console.warn(
+            "Clipboard unavailable; review text was not copied automatically.",
           );
+        });
 
-          const logRedirectContext = (extra: Record<string, unknown>) => {
-            if (!reviewRedirectDebug) return;
+        if (!willRedirect) {
+          if (reviewRedirectDebug) {
             console.info("[review-redirect]", {
-              eligible: true,
+              eligible: false,
               rating,
               threshold,
               allow_low_rating_redirect: allowLowRatingRedirect,
-              direct_redirect_business_flag: directRedirect,
-              finalUrl: trackedGoogle,
+              finalUrl: googleUrl,
+              redirectBlockedReason: !canRedirectPublicly
+                ? "policy_or_invalid_url"
+                : "no_google_url",
               currentRoute:
                 typeof window !== "undefined" ? window.location.href : "",
               rewardModalOpen:
                 typeof document !== "undefined"
                   ? document.body?.dataset?.reviewRewardModalOpen
                   : undefined,
-              delayedReviewModalOpen:
-                typeof document !== "undefined"
-                  ? document.body?.dataset?.reviewModalOpen
-                  : undefined,
-              loadingState: { isSubmitting: true },
-              ...extra,
+              loadingState: { isSubmitting: false },
             });
-          };
-
-          logRedirectContext({
-            redirectAllowed: true,
-            phase: "before_navigation",
-          });
-
-          scheduledHardRedirect = true;
-
-          // Defer past this task so React flushes state; then hard-navigate (reliable on mobile).
-          window.setTimeout(() => {
-            logRedirectContext({
-              redirectStarted: true,
-              redirectMethod: "window.location.href",
-              phase: "navigation_callback",
-            });
-            try {
-              window.location.href = trackedGoogle;
-              if (reviewRedirectDebug) {
-                console.info("[review-redirect]", {
-                  eligible: true,
-                  phase: "after_href_assign",
-                  note: "If you still see this log, navigation may have been blocked.",
-                });
-              }
-            } catch (err) {
-              console.error("[review-redirect]", {
-                eligible: true,
-                phase: "navigation_failed",
-                error: err instanceof Error ? err.message : String(err),
-              });
-              try {
-                window.location.replace(trackedGoogle);
-              } catch (err2) {
-                console.error("[review-redirect]", {
-                  eligible: true,
-                  phase: "replace_failed",
-                  error: err2 instanceof Error ? err2.message : String(err2),
-                });
-                submittingRef.current = false;
-                setIsSubmitting(false);
-              }
-            }
-          }, 0);
+          }
+          setFlow("thanks_internal");
           return;
         }
-      } catch {
-        setSubmitError(t("rating.errNetwork"));
-      } finally {
-        if (!scheduledHardRedirect) {
-          submittingRef.current = false;
-          setIsSubmitting(false);
-        }
+
+        const trackedGoogle = buildTrackedScanOutUrl(
+          businessId,
+          "google",
+          googleUrl as string,
+        );
+
+        const logRedirectContext = (extra: Record<string, unknown>) => {
+          if (!reviewRedirectDebug) return;
+          console.info("[review-redirect]", {
+            eligible: true,
+            rating,
+            threshold,
+            allow_low_rating_redirect: allowLowRatingRedirect,
+            direct_redirect_business_flag: directRedirect,
+            finalUrl: trackedGoogle,
+            currentRoute:
+              typeof window !== "undefined" ? window.location.href : "",
+            rewardModalOpen:
+              typeof document !== "undefined"
+                ? document.body?.dataset?.reviewRewardModalOpen
+                : undefined,
+            delayedReviewModalOpen:
+              typeof document !== "undefined"
+                ? document.body?.dataset?.reviewModalOpen
+                : undefined,
+            loadingState: { isSubmitting: false },
+            ...extra,
+          });
+        };
+
+        logRedirectContext({
+          redirectAllowed: true,
+          phase: "before_delayed_navigation",
+        });
+
+        const delayMs = 3000 + Math.round(Math.random() * 2000);
+        setGoogleRedirectHold({
+          url: trackedGoogle,
+          redirectAt: Date.now() + delayMs,
+        });
       }
+    } catch {
+      setSubmitError(t("rating.errNetwork"));
+    } finally {
+      submittingRef.current = false;
+      setIsSubmitting(false);
+    }
   }, [
     allowLowRatingRedirect,
     businessId,
@@ -636,37 +786,73 @@ export function ReviewRatingPlaceholder({
         <div className="min-h-0">
           <div className="mt-5 space-y-4">
             <div>
-              <h3
-                id={`${id}-options-label`}
-                className="text-xs font-medium text-[var(--review-fg)] sm:text-sm"
-              >
-                {t("rating.suggestedWording")}
-              </h3>
-              <p className="mt-0.5 text-xs text-[var(--review-muted)]">
-                {t("rating.suggestedHint")}
-              </p>
+              <div className="flex flex-wrap items-center gap-2">
+                <h3
+                  id={`${id}-options-label`}
+                  className="text-xs font-medium text-[var(--review-fg)] sm:text-sm"
+                >
+                  {optionsTitle}
+                </h3>
+                {showingAiCards && aiSuggest.wasCached ? (
+                  <span className="rounded-full border border-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_88%,var(--review-primary)_10%)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--review-primary)]">
+                    {t("rating.aiInstantBadge")}
+                  </span>
+                ) : null}
+              </div>
+              <p className="mt-0.5 text-xs text-[var(--review-muted)]">{optionsHint}</p>
             </div>
 
+            {aiNotice ? (
+              <p
+                role="status"
+                className="rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] px-3 py-2.5 text-center text-[11px] leading-relaxed text-[var(--review-muted)] sm:text-xs"
+              >
+                {aiNotice}
+              </p>
+            ) : null}
+
+            {showAiSuggestionSkeleton ? (
+              <div
+                className="min-h-[calc(var(--ai-skeleton-rows)*3.25rem)] space-y-2"
+                style={
+                  { "--ai-skeleton-rows": String(skeletonRows) } as CSSProperties
+                }
+                aria-busy="true"
+                aria-live="polite"
+              >
+                <p className="text-xs font-medium text-[var(--review-fg)]">
+                  {aiSuggest.phase === "debouncing"
+                    ? t("rating.aiPreparing")
+                    : t("rating.aiGenerating")}
+                </p>
+                {aiSuggest.phase === "fetching" && aiSuggest.showFetchSkeleton ? (
+                  <p className="text-[11px] text-[var(--review-muted)]">
+                    {t("rating.aiGeneratingSub")}
+                  </p>
+                ) : null}
+                <ReviewAiSuggestionSkeleton rows={skeletonRows} />
+              </div>
+            ) : null}
+
             <ul
-              className="flex flex-col gap-3"
+              className={`flex flex-col gap-3 ${showAiSuggestionSkeleton ? "hidden" : ""}`}
               role="list"
               aria-labelledby={`${id}-options-label`}
+              aria-hidden={showAiSuggestionSkeleton || undefined}
             >
-              {options.map((text, index) => {
-                const selected = selectedIndex === index;
+              {displayCardTexts.map((text, index) => {
+                const selected = effectiveSelectedIndex === index;
+                const cardKey = showingAiCards ? `ai-${rating}-${index}` : `st-${rating}-${index}`;
                 return (
-                  <li key={`${rating}-${index}`}>
+                  <li key={cardKey}>
                     <button
                       suppressHydrationWarning
                       type="button"
+                      data-idx={String(index)}
                       aria-pressed={selected}
                       disabled={submitted || isSubmitting}
-                      onClick={() => selectOption(index, text)}
-                      className={`w-full rounded-xl border px-4 py-3.5 text-left text-sm leading-snug transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out motion-reduce:transition-none active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 sm:py-4 ${
-                        selected
-                          ? "border-[var(--review-primary)] bg-[color-mix(in_srgb,var(--review-bg)_82%,var(--review-primary)_12%)] shadow-[0_0_0_2px_var(--review-primary)]"
-                          : "border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] hover:border-[color-mix(in_srgb,var(--review-primary)_45%,transparent)] hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-primary)_6%)]"
-                      } text-[var(--review-fg)]`}
+                      onClick={handleSuggestionPick}
+                      className={suggestionBtnClass(selected)}
                     >
                       {text}
                     </button>
@@ -689,13 +875,20 @@ export function ReviewRatingPlaceholder({
                 value={reviewText}
                 aria-required="true"
                 onChange={(e) => {
+                  const v = e.target.value;
                   setSubmitError(null);
-                  setReviewText(e.target.value);
+                  setReviewText(v);
+                  if (effectiveSelectedIndex !== null) {
+                    const chosen = displayCardTexts[effectiveSelectedIndex];
+                    if (chosen !== undefined && v !== chosen) {
+                      setSelectedIndex(null);
+                    }
+                  }
                 }}
                 readOnly={submitted || isSubmitting}
                 rows={4}
                 placeholder={t("rating.reviewPlaceholder")}
-                className="mt-2 w-full resize-y rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_98%,var(--review-fg))] px-3 py-3 text-sm text-[var(--review-fg)] outline-none transition-[border-color,box-shadow] duration-200 read-only:cursor-default read-only:opacity-90 placeholder:text-[var(--review-muted)] focus:border-[var(--review-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] disabled:cursor-not-allowed disabled:opacity-60"
+                className="mt-2 w-full scroll-mt-4 resize-y rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_98%,var(--review-fg))] px-3 py-3 text-base leading-relaxed text-[var(--review-fg)] outline-none transition-[border-color,box-shadow,min-height] duration-200 read-only:cursor-default read-only:opacity-90 placeholder:text-[var(--review-muted)] focus:border-[var(--review-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
               />
             </div>
 
@@ -876,6 +1069,44 @@ export function ReviewRatingPlaceholder({
           </div>
         </div>
       </div>
+
+      {googleRedirectHold ? (
+        <div
+          className="fixed inset-0 z-[70] flex items-end justify-center overflow-y-auto overscroll-contain bg-black/45 px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-8 sm:items-center sm:pb-8"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby={`${id}-redirect-title`}
+        >
+          <div className="w-full max-w-md rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] p-5 shadow-2xl">
+            <p
+              id={`${id}-redirect-title`}
+              className="text-center text-base font-semibold text-[var(--review-fg)]"
+            >
+              {t("rating.copyToastTitle")}
+            </p>
+            <p className="mt-2 text-center text-sm leading-relaxed text-[var(--review-muted)]">
+              {t("rating.googleRedirectHint")}
+            </p>
+            <p className="mt-2 text-center text-xs text-[var(--review-muted)]">
+              {t("rating.postSubmitRedirectNote")}
+            </p>
+            <p className="mt-4 text-center text-sm font-semibold text-[var(--review-fg)]">
+              {t("rating.redirectCountdown", { seconds: redirectSecondsLeft })}
+            </p>
+            {clipboardWarning ? (
+              <p className="mt-2 text-center text-xs text-amber-700 dark:text-amber-300">
+                {t("rating.clipboardWarning")}
+              </p>
+            ) : null}
+            <a
+              href={googleRedirectHold.url}
+              className="mt-4 block text-center text-sm font-medium text-[var(--review-primary)] underline underline-offset-2"
+            >
+              {t("rating.redirectOpenManually")}
+            </a>
+          </div>
+        </div>
+      ) : null}
 
       {copySuccessToast}
     </section>

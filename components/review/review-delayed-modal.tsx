@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { getPreferredPublicUrl, isSafeHttpUrl } from "@/lib/review/business-config";
 import type { BusinessChannels } from "@/lib/types/business";
 import { useReviewT } from "@/components/review/review-i18n-provider";
+import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
 
 type Props = {
   googleReviewUrl: string;
@@ -32,6 +33,8 @@ export function ReviewDelayedModal({
     const g = googleReviewUrl.trim().toLowerCase() || "no-google";
     return `delayed-review-once:${slugPart}:${g}`;
   }, [googleReviewUrl, pageSlug]);
+
+  useBodyScrollLock(open);
 
   const shouldTrigger = useMemo(() => {
     if (directRedirect) return false;
@@ -65,9 +68,11 @@ export function ReviewDelayedModal({
   }, [delayMs, sessionKey, shouldTrigger]);
 
   useEffect(() => {
-    if (!open && document.body.dataset.reviewModalOpen === "1") {
+    if (!open) return;
+    document.body.dataset.reviewModalOpen = "1";
+    return () => {
       delete document.body.dataset.reviewModalOpen;
-    }
+    };
   }, [open]);
 
   if (!open) return null;
@@ -81,7 +86,7 @@ export function ReviewDelayedModal({
       onClick={() => setOpen(false)}
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] p-5 shadow-xl"
+        className="w-full max-w-sm overscroll-contain rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <p

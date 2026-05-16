@@ -16,6 +16,13 @@ import {
   validateAndMergeFiles,
   BUSINESS_IMAGE_ACCEPT,
 } from "@/components/admin/add-business/upload-utils";
+import { ExistingMediaGrid } from "@/components/admin/media/existing-media-grid";
+import { deleteMediaUrls } from "@/lib/storage/delete-media-client";
+import {
+  dedupeMediaUrls,
+  diffRemovedMediaUrls,
+  normalizeStorageSlug,
+} from "@/lib/storage/media-storage";
 import {
   COUNTRY_DIAL_CODES,
   joinDialAndLocal,
@@ -72,6 +79,8 @@ import {
   finalizeCallForPersist,
   buildCallTelHref,
 } from "@/lib/call/call-channel";
+import { defaultSuggestionsForPlan } from "@/lib/ai/suggestions-by-plan";
+import { adminAiLabels } from "@/lib/i18n/admin-ai-labels";
 
 type Channel = {
   enabled: boolean;
@@ -118,6 +127,11 @@ type DetailValues = {
   callCountryCode: string;
   callNumber: string;
   masterQrType: MasterQrType;
+  aiEnabled: boolean;
+  aiReviewLanguage: "en" | "hi" | "hinglish";
+  aiDailyLimit: string;
+  /** Empty string = use plan default suggestion count. */
+  aiSuggestionsCount: string;
 };
 
 type Analytics = {
@@ -132,9 +146,11 @@ type Analytics = {
   }>;
 };
 
+const AI_ADMIN = adminAiLabels();
+
 const MASTER_QR_GROUP_DETAIL = "masterQrEditBusiness";
 
-function noopMaster(_t: MasterQrType): void {}
+function noopMaster(): void {}
 
 /** Master radio: visible in view mode (read-only) and editable when `isEditing`. */
 function channelMasterSelect(
@@ -170,6 +186,13 @@ function detailValuesToMasterBase(v: DetailValues) {
       ? clampWhatsAppLocalInput(v.whatsappNumber)
       : null,
   };
+}
+
+const MAX_BANNER_IMAGES = 10;
+const MAX_IDENTITY_PROOF_IMAGES = 10;
+
+function uploadSlugFromValues(v: Pick<DetailValues, "brandName" | "name" | "slug">): string {
+  return normalizeStorageSlug(v.brandName || v.name || v.slug || "business");
 }
 
 export function BusinessDetailEditor({
@@ -390,9 +413,11 @@ export function BusinessDetailEditor({
       return;
     }
     const d = computeDefaultMasterQrType(base);
-    if (d !== v.masterQrType) {
+    if (d === v.masterQrType) return;
+    const syncId = window.setTimeout(() => {
       setValues((s) => (s.masterQrType === d ? s : { ...s, masterQrType: d }));
-    }
+    }, 0);
+    return () => window.clearTimeout(syncId);
   }, [
     isEditing,
     values.googleUrl,
@@ -457,11 +482,24 @@ export function BusinessDetailEditor({
       setSubmitSuccess(null);
     };
 
+  const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+    },
+    [],
+  );
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(publicUrl);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+      copyFeedbackTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copyFeedbackTimerRef.current = null;
+      }, 1200);
     } catch {
       setCopied(false);
     }
@@ -635,6 +673,16 @@ export function BusinessDetailEditor({
     let nextClientPhotoUrl: string | null = null;
     const oldLogoUrl = saveSnap.logoUrl || null;
     const oldClientPhotoUrl = saveSnap.clientPhotoUrl.trim() || null;
+    const uploadSlug = uploadSlugFromValues(saveSnap);
+    const uploadedOrphans: string[] = [];
+
+    if (saveSnap.banners.length + bannerFiles.length > MAX_BANNER_IMAGES) {
+      setBannerError(
+        `Maximum ${MAX_BANNER_IMAGES} banners allowed (${saveSnap.banners.length} saved + ${bannerFiles.length} new).`,
+      );
+      setSubmitError("Please resolve media upload errors before saving.");
+      return;
+    }
 
     if (logoFiles.length > 0) {
       try {
@@ -644,7 +692,10 @@ export function BusinessDetailEditor({
           businessSlug: saveSnap.brandName || saveSnap.name || saveSnap.slug || "business",
         });
         nextLogoUrl = uploaded[0] ?? null;
-        if (nextLogoUrl) patch.logo_url = nextLogoUrl;
+        if (nextLogoUrl) {
+          patch.logo_url = nextLogoUrl;
+          uploadedOrphans.push(...uploaded);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to upload logo";
         setSubmitError(message);
@@ -656,41 +707,55 @@ export function BusinessDetailEditor({
         const uploaded = await uploadMediaFiles({
           files: bannerFiles,
           kind: "banner",
-          businessSlug: saveSnap.brandName || saveSnap.name || saveSnap.slug || "business",
+          businessSlug: uploadSlug,
         });
-        nextBannerUrls = uploaded;
-        patch.banner_urls = uploaded;
+        const merged = dedupeMediaUrls([...saveSnap.banners, ...uploaded]);
+        nextBannerUrls = merged;
+        patch.banner_urls = merged;
+        uploadedOrphans.push(...uploaded);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to upload banner images";
         setSubmitError(message);
         return;
       }
+    } else if (
+      JSON.stringify(dedupeMediaUrls(saveSnap.banners)) !==
+      JSON.stringify(dedupeMediaUrls(baseline.banners))
+    ) {
+      patch.banner_urls = dedupeMediaUrls(saveSnap.banners);
     }
     if (resourceFiles.length > 0) {
       try {
         const uploaded = await uploadMediaFiles({
           files: resourceFiles,
           kind: "resource",
-          businessSlug: saveSnap.brandName || saveSnap.name || saveSnap.slug || "business",
+          businessSlug: uploadSlug,
         });
         nextResourceUrls = uploaded;
         patch.resource_urls = uploaded;
+        uploadedOrphans.push(...uploaded);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to upload resource files";
         setSubmitError(message);
         return;
       }
+    } else if (
+      JSON.stringify(dedupeMediaUrls(saveSnap.resources)) !==
+      JSON.stringify(dedupeMediaUrls(baseline.resources))
+    ) {
+      patch.resource_urls = dedupeMediaUrls(saveSnap.resources);
     }
     if (identityProofFiles.length > 0) {
       try {
         const uploaded = await uploadMediaFiles({
           files: identityProofFiles,
           kind: "identity_proof",
-          businessSlug: saveSnap.brandName || saveSnap.name || saveSnap.slug || "business",
+          businessSlug: uploadSlug,
         });
-        const merged = [...saveSnap.identityProofUrls, ...uploaded];
+        const merged = dedupeMediaUrls([...saveSnap.identityProofUrls, ...uploaded]);
         nextIdentityProofUrls = merged;
         patch.identity_proof_urls = merged;
+        uploadedOrphans.push(...uploaded);
       } catch (err) {
         const message =
           err instanceof Error ? err.message : "Failed to upload identity proof images";
@@ -703,12 +768,13 @@ export function BusinessDetailEditor({
         const uploaded = await uploadMediaFiles({
           files: clientProfileFiles.slice(0, 1),
           kind: "client_photo",
-          businessSlug: saveSnap.brandName || saveSnap.name || saveSnap.slug || "business",
+          businessSlug: uploadSlug,
         });
         const url = uploaded[0] ?? null;
         if (url) {
           nextClientPhotoUrl = url;
           patch.client_photo_url = url;
+          uploadedOrphans.push(url);
         }
       } catch (err) {
         const message =
@@ -727,14 +793,6 @@ export function BusinessDetailEditor({
     setSubmitSuccess(null);
 
     try {
-      if (process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console
-        console.log("[edit-business] PATCH payload", {
-          keys: Object.keys(patch),
-          identity_type: patch.identity_type,
-          identity_number: patch.identity_number,
-        });
-      }
       const res = await fetch(`/api/business/${saveSnap.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
@@ -743,6 +801,9 @@ export function BusinessDetailEditor({
 
       const result: unknown = await res.json().catch(() => null);
       if (!res.ok) {
+        if (uploadedOrphans.length > 0) {
+          void deleteMediaUrls(uploadedOrphans, { businessSlug: uploadSlug });
+        }
         const msg =
           typeof result === "object" &&
           result !== null &&
@@ -811,15 +872,22 @@ export function BusinessDetailEditor({
       setValues(nextValues);
       setBaseline(nextValues);
       setIsEditing(false);
-      if (nextLogoUrl && oldLogoUrl && oldLogoUrl !== nextLogoUrl) {
-        void removeMediaFiles([oldLogoUrl]);
-      }
-      if (
-        nextClientPhotoUrl &&
+      const finalBanners = nextBannerUrls ?? saveSnap.banners;
+      const finalResources = nextResourceUrls ?? saveSnap.resources;
+      const finalIdentity = nextIdentityProofUrls ?? saveSnap.identityProofUrls;
+      const storageCleanup = dedupeMediaUrls([
+        ...diffRemovedMediaUrls(baseline.banners, finalBanners),
+        ...diffRemovedMediaUrls(baseline.resources, finalResources),
+        ...diffRemovedMediaUrls(baseline.identityProofUrls, finalIdentity),
+        ...(nextLogoUrl && oldLogoUrl && oldLogoUrl !== nextLogoUrl ? [oldLogoUrl] : []),
+        ...(nextClientPhotoUrl &&
         oldClientPhotoUrl &&
         oldClientPhotoUrl !== nextClientPhotoUrl
-      ) {
-        void removeMediaFiles([oldClientPhotoUrl]);
+          ? [oldClientPhotoUrl]
+          : []),
+      ]);
+      if (storageCleanup.length > 0) {
+        void deleteMediaUrls(storageCleanup, { businessSlug: uploadSlugFromValues(nextValues) });
       }
       setLogoFiles([]);
       setLogoNames([]);
@@ -1201,7 +1269,7 @@ export function BusinessDetailEditor({
                       label="Add identity proof images"
                       accept={BUSINESS_IMAGE_ACCEPT}
                       multiple
-                      maxFiles={10}
+                      maxFiles={Math.max(0, MAX_IDENTITY_PROOF_IMAGES - values.identityProofUrls.length)}
                       fileNames={identityProofNames}
                       previewUrls={identityProofPreviewUrls}
                       uploading={isSaving && identityProofFiles.length > 0}
@@ -1227,10 +1295,14 @@ export function BusinessDetailEditor({
                       }}
                       onFilesChange={(files) => {
                         const incoming = files ? Array.from(files) : [];
+                        const slotsLeft = Math.max(
+                          0,
+                          MAX_IDENTITY_PROOF_IMAGES - values.identityProofUrls.length,
+                        );
                         const { accepted, errors } = validateAndMergeFiles({
                           incoming,
                           existing: identityProofFiles,
-                          maxCount: 10,
+                          maxCount: slotsLeft,
                         });
                         setIdentityProofFiles(accepted);
                         setIdentityProofNames(accepted.map((f) => f.name));
@@ -1466,30 +1538,39 @@ export function BusinessDetailEditor({
           </div>
 
           <div className="mt-8 space-y-4 border-t border-zinc-100 pt-8 dark:border-zinc-800">
-            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Banner images</p>
-            <MediaPreview
-              title="Current banners"
-              items={bannerPreviewUrls.length > 0 ? bannerPreviewUrls : values.banners}
-              emptyLabel="No banners uploaded"
-            />
-            {isEditing && values.banners.length > 0 && bannerPreviewUrls.length === 0 ? (
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  className={adminPanel.btnSecondary}
-                  onClick={() => setValues((s) => ({ ...s, banners: [] }))}
-                >
-                  Remove existing banners
-                </button>
-              </div>
-            ) : null}
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Banner images</p>
+              {isEditing ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {values.banners.length + bannerFiles.length} / {MAX_BANNER_IMAGES} banners
+                </p>
+              ) : null}
+            </div>
+            <div className="space-y-2 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
+              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Saved banners</p>
+              {isEditing ? (
+                <ExistingMediaGrid
+                  urls={values.banners}
+                  emptyLabel="No banners uploaded"
+                  editable
+                  onRemove={(_idx, url) =>
+                    setValues((s) => ({
+                      ...s,
+                      banners: s.banners.filter((u) => u !== url),
+                    }))
+                  }
+                />
+              ) : (
+                <ExistingMediaGrid urls={values.banners} emptyLabel="No banners uploaded" />
+              )}
+            </div>
             {isEditing ? (
               <FileUploadField
                 id="editBusinessBanners"
-                label="Add or replace banners"
+                label="Upload additional banners"
                 accept={BUSINESS_IMAGE_ACCEPT}
                 multiple
-                maxFiles={10}
+                maxFiles={Math.max(0, MAX_BANNER_IMAGES - values.banners.length)}
                 fileNames={bannerNames}
                 previewUrls={bannerPreviewUrls}
                 uploading={isSaving && bannerFiles.length > 0}
@@ -1512,10 +1593,17 @@ export function BusinessDetailEditor({
                 }}
                 onFilesChange={(files) => {
                   const incoming = files ? Array.from(files) : [];
+                  const slotsLeft = Math.max(0, MAX_BANNER_IMAGES - values.banners.length);
+                  if (slotsLeft === 0 && incoming.length > 0) {
+                    setBannerError(
+                      `Maximum ${MAX_BANNER_IMAGES} banners allowed. Remove a saved banner to add more.`,
+                    );
+                    return;
+                  }
                   const { accepted, errors } = validateAndMergeFiles({
                     incoming,
-                    existing: [],
-                    maxCount: 10,
+                    existing: bannerFiles,
+                    maxCount: slotsLeft,
                   });
                   setBannerFiles(accepted);
                   setBannerNames(accepted.map((f) => f.name));
@@ -1525,7 +1613,13 @@ export function BusinessDetailEditor({
                   );
                   setBannerError(errors[0] ?? null);
                 }}
-                hint="Multiple images supported (up to 10)."
+                hint={`Add up to ${MAX_BANNER_IMAGES} banners total (5MB each). New images append to saved banners when you save.`}
+              />
+            ) : values.banners.length > 0 ? (
+              <MediaPreview
+                title="Banner preview"
+                items={values.banners}
+                emptyLabel="No banners uploaded"
               />
             ) : null}
           </div>
@@ -1593,6 +1687,69 @@ export function BusinessDetailEditor({
                   <option value="pro_plus">Pro Plus</option>
                 </select>
               )}
+            </FormField>
+          </div>
+        </FormSection>
+
+        <FormSection
+          title={AI_ADMIN.business.sectionTitle}
+          description="Phase 1 — stored preferences only; generation UI comes later."
+        >
+          <div className="grid gap-5 sm:grid-cols-2">
+            <FormToggle
+              id="aiEnabled"
+              label={AI_ADMIN.business.enabled}
+              checked={values.aiEnabled}
+              onChange={setField("aiEnabled")}
+              disabled={!isEditing}
+            />
+            <FormField label={AI_ADMIN.business.language} htmlFor="aiReviewLanguage">
+              <select
+                id="aiReviewLanguage"
+                value={values.aiReviewLanguage}
+                onChange={(e) =>
+                  setField("aiReviewLanguage")(e.target.value as DetailValues["aiReviewLanguage"])
+                }
+                className={formInputBase}
+                disabled={!isEditing}
+              >
+                <option value="en">{AI_ADMIN.business.languageEn}</option>
+                <option value="hi">{AI_ADMIN.business.languageHi}</option>
+                <option value="hinglish">{AI_ADMIN.business.languageHinglish}</option>
+              </select>
+            </FormField>
+            <FormField
+              label={AI_ADMIN.business.dailyLimit}
+              htmlFor="aiDailyLimit"
+              hint="Server-side cap for AI calls per UTC day."
+            >
+              <input
+                id="aiDailyLimit"
+                type="number"
+                min={1}
+                max={50000}
+                value={values.aiDailyLimit}
+                onChange={(e) => setField("aiDailyLimit")(e.target.value)}
+                className={formInputBase}
+                disabled={!isEditing}
+              />
+            </FormField>
+            <FormField
+              label={AI_ADMIN.business.suggestionsCount}
+              htmlFor="aiSuggestionsCount"
+              hint={`${AI_ADMIN.business.planDefaultHint}. ${AI_ADMIN.business.effectiveSuggestions}: ${values.aiSuggestionsCount.trim() ? values.aiSuggestionsCount.trim() : String(defaultSuggestionsForPlan(values.planType))}.`}
+            >
+              <input
+                id="aiSuggestionsCount"
+                type="number"
+                min={1}
+                max={20}
+                placeholder="Plan default"
+                value={values.aiSuggestionsCount}
+                onChange={(e) => setField("aiSuggestionsCount")(e.target.value)}
+                className={formInputBase}
+                disabled={!isEditing}
+              />
             </FormField>
           </div>
         </FormSection>
@@ -2398,6 +2555,10 @@ type PatchPayload = {
   call_country_code: string;
   call_number: string | null;
   master_qr_type: MasterQrType;
+  ai_enabled: boolean;
+  ai_review_language: string;
+  ai_daily_limit: number;
+  ai_suggestions_count: number | null;
 };
 
 function toPatchPayload(v: DetailValues): PatchPayload {
@@ -2456,6 +2617,20 @@ function toPatchPayload(v: DetailValues): PatchPayload {
     identity_proof_urls: [...v.identityProofUrls],
     client_photo_url: v.clientPhotoUrl.trim() ? v.clientPhotoUrl.trim() : null,
     master_qr_type: v.masterQrType,
+    ai_enabled: v.aiEnabled,
+    ai_review_language: v.aiReviewLanguage,
+    ai_daily_limit:
+      Number.isFinite(Number.parseInt(v.aiDailyLimit, 10)) &&
+      Number.parseInt(v.aiDailyLimit, 10) >= 1
+        ? Math.min(50_000, Number.parseInt(v.aiDailyLimit, 10))
+        : 50,
+    ai_suggestions_count:
+      v.aiSuggestionsCount.trim() === ""
+        ? null
+        : Math.min(
+            20,
+            Math.max(1, Number.parseInt(v.aiSuggestionsCount.trim(), 10) || 1),
+          ),
   };
 }
 
@@ -2480,6 +2655,10 @@ function isPatchPayloadEqual(a: PatchPayload, b: PatchPayload): boolean {
     a.call_country_code !== b.call_country_code ||
     a.call_number !== b.call_number ||
     a.master_qr_type !== b.master_qr_type ||
+    a.ai_enabled !== b.ai_enabled ||
+    a.ai_review_language !== b.ai_review_language ||
+    a.ai_daily_limit !== b.ai_daily_limit ||
+    a.ai_suggestions_count !== b.ai_suggestions_count ||
     a.identity_type !== b.identity_type ||
     a.identity_number !== b.identity_number
   ) {
@@ -2565,6 +2744,14 @@ function buildPatchPayload(
   if (cur.master_qr_type !== base.master_qr_type) {
     patch.master_qr_type = cur.master_qr_type;
   }
+  if (cur.ai_enabled !== base.ai_enabled) patch.ai_enabled = cur.ai_enabled;
+  if (cur.ai_review_language !== base.ai_review_language) {
+    patch.ai_review_language = cur.ai_review_language;
+  }
+  if (cur.ai_daily_limit !== base.ai_daily_limit) patch.ai_daily_limit = cur.ai_daily_limit;
+  if (cur.ai_suggestions_count !== base.ai_suggestions_count) {
+    patch.ai_suggestions_count = cur.ai_suggestions_count;
+  }
 
   return patch;
 }
@@ -2606,11 +2793,3 @@ async function uploadMediaFiles(input: {
   );
 }
 
-async function removeMediaFiles(urls: string[]): Promise<void> {
-  if (urls.length === 0) return;
-  await fetch("/api/upload/media", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ urls }),
-  });
-}

@@ -54,6 +54,8 @@ import {
   validateMasterQrForPersist,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
+import { defaultSuggestionsForPlan } from "@/lib/ai/suggestions-by-plan";
+import { adminAiLabels } from "@/lib/i18n/admin-ai-labels";
 
 type Errors = Partial<Record<string, string>>;
 type Touched = Partial<
@@ -127,6 +129,16 @@ function normalizeForSubmit(values: FormValues): FormValues {
       if (!t || !isAllowedIdentityTypeSlug(t)) return "";
       return normalizeIdentityNumberForStorage(t as BusinessIdentityTypeSlug, values.identityNumber);
     })(),
+    aiReviewLanguage:
+      values.aiReviewLanguage === "hi" || values.aiReviewLanguage === "hinglish"
+        ? values.aiReviewLanguage
+        : "en",
+    aiDailyLimit: (() => {
+      const d = values.aiDailyLimit.replace(/\D/g, "");
+      const n = d ? Number.parseInt(d, 10) : 50;
+      return String(Number.isFinite(n) && n >= 1 ? Math.min(50000, n) : 50);
+    })(),
+    aiSuggestionsCount: values.aiSuggestionsCount.replace(/\D/g, "").slice(0, 2),
   };
 }
 
@@ -221,10 +233,26 @@ function validate(
   });
   if (masterErr) e.masterQrType = masterErr;
 
+  const aiDailyParsed = Number.parseInt(values.aiDailyLimit.replace(/\D/g, ""), 10);
+  if (
+    values.aiDailyLimit.trim() &&
+    (!Number.isFinite(aiDailyParsed) || aiDailyParsed < 1 || aiDailyParsed > 50000)
+  ) {
+    e.aiDailyLimit = "Enter a daily limit from 1 to 50000";
+  }
+  if (values.aiSuggestionsCount.trim()) {
+    const s = Number.parseInt(values.aiSuggestionsCount.trim(), 10);
+    if (!Number.isInteger(s) || s < 1 || s > 20) {
+      e.aiSuggestionsCount = "Use 1–20 or leave blank for plan default";
+    }
+  }
+
   return e;
 }
 
 const MASTER_QR_GROUP_ADD = "masterQrAddBusiness";
+
+const AI_ADMIN = adminAiLabels();
 
 function channelsObjectForMaster(v: FormValues) {
   return {
@@ -282,6 +310,10 @@ type FormValues = {
   identityType: string;
   identityNumber: string;
   masterQrType: MasterQrType;
+  aiEnabled: boolean;
+  aiReviewLanguage: "en" | "hi" | "hinglish";
+  aiDailyLimit: string;
+  aiSuggestionsCount: string;
 };
 
 const initialValues: FormValues = {
@@ -318,6 +350,10 @@ const initialValues: FormValues = {
   identityType: "aadhaar",
   identityNumber: "",
   masterQrType: "google_review",
+  aiEnabled: false,
+  aiReviewLanguage: "en",
+  aiDailyLimit: "50",
+  aiSuggestionsCount: "",
 };
 
 async function uploadMediaFiles(input: {
@@ -672,14 +708,17 @@ export function AddBusinessForm({
     });
   };
 
-  const isFormValid =
-    Object.keys(
-      validate(
-        normalizeForSubmit(valuesRef.current),
-        identityProofFiles.length,
-        clientProfileFiles.length,
-      ),
-    ).length === 0;
+  const isFormValid = useMemo(
+    () =>
+      Object.keys(
+        validate(
+          normalizeForSubmit(values),
+          identityProofFiles.length,
+          clientProfileFiles.length,
+        ),
+      ).length === 0,
+    [values, identityProofFiles.length, clientProfileFiles.length],
+  );
   const hasUploadErrors = Boolean(
     uploadErrors.logo ||
       uploadErrors.banner ||
@@ -728,16 +767,6 @@ export function AddBusinessForm({
 
     const submitSnapshot = valuesRef.current;
     const normalizedValues = normalizeForSubmit(submitSnapshot);
-    if (process.env.NODE_ENV !== "production") {
-      // Temporary: identity + payload sync debugging (remove when stable).
-      // eslint-disable-next-line no-console
-      console.log("[add-business] submit snapshot", {
-        identityType: submitSnapshot.identityType,
-        identityNumber: submitSnapshot.identityNumber,
-        normalizedType: normalizedValues.identityType,
-        normalizedNumber: normalizedValues.identityNumber,
-      });
-    }
     const next = validate(
       normalizedValues,
       identityProofFiles.length,
@@ -857,15 +886,14 @@ export function AddBusinessForm({
         banner_urls: bannerUrls,
         resource_urls: resourceUrls,
         master_qr_type: normalizedValues.masterQrType,
+        ai_enabled: normalizedValues.aiEnabled,
+        ai_review_language: normalizedValues.aiReviewLanguage,
+        ai_daily_limit: Number.parseInt(normalizedValues.aiDailyLimit, 10) || 50,
+        ai_suggestions_count:
+          normalizedValues.aiSuggestionsCount.trim() === ""
+            ? null
+            : Number.parseInt(normalizedValues.aiSuggestionsCount.trim(), 10) || null,
       };
-
-      if (process.env.NODE_ENV !== "production") {
-        // eslint-disable-next-line no-console
-        console.log("[add-business] POST payload identity", {
-          identity_type: payload.identity_type,
-          identity_number: payload.identity_number,
-        });
-      }
 
       const res = await fetch("/api/business", {
         method: "POST",
@@ -1351,6 +1379,69 @@ export function AddBusinessForm({
                 <option value="pro">Pro</option>
                 <option value="pro_plus">Pro Plus</option>
               </select>
+            </FormField>
+          </div>
+        </FormSection>
+
+        <FormSection
+          title={AI_ADMIN.business.sectionTitle}
+          description="Phase 1 — preferences only; generation UI comes later."
+        >
+          <div className="grid gap-5 sm:grid-cols-2">
+            <FormToggle
+              id="aiEnabled"
+              label={AI_ADMIN.business.enabled}
+              checked={values.aiEnabled}
+              onChange={patch("aiEnabled")}
+            />
+            <FormField label={AI_ADMIN.business.language} htmlFor="aiReviewLanguage">
+              <select
+                id="aiReviewLanguage"
+                value={values.aiReviewLanguage}
+                onChange={(e) =>
+                  patch("aiReviewLanguage")(e.target.value as FormValues["aiReviewLanguage"])
+                }
+                className={fieldClass("aiReviewLanguage")}
+              >
+                <option value="en">{AI_ADMIN.business.languageEn}</option>
+                <option value="hi">{AI_ADMIN.business.languageHi}</option>
+                <option value="hinglish">{AI_ADMIN.business.languageHinglish}</option>
+              </select>
+            </FormField>
+            <FormField
+              label={AI_ADMIN.business.dailyLimit}
+              htmlFor="aiDailyLimit"
+              error={errors.aiDailyLimit}
+              hint="Cap per UTC day (server-side)."
+            >
+              <input
+                id="aiDailyLimit"
+                type="number"
+                min={1}
+                max={50000}
+                value={values.aiDailyLimit}
+                onChange={(e) => patch("aiDailyLimit")(e.target.value)}
+                onBlur={() => markTouched("aiDailyLimit")}
+                className={fieldClass("aiDailyLimit")}
+              />
+            </FormField>
+            <FormField
+              label={AI_ADMIN.business.suggestionsCount}
+              htmlFor="aiSuggestionsCount"
+              error={errors.aiSuggestionsCount}
+              hint={`${AI_ADMIN.business.planDefaultHint} (current plan → ${defaultSuggestionsForPlan(values.subscriptionPlan)}). Leave blank for plan default.`}
+            >
+              <input
+                id="aiSuggestionsCount"
+                type="number"
+                min={1}
+                max={20}
+                placeholder="Plan default"
+                value={values.aiSuggestionsCount}
+                onChange={(e) => patch("aiSuggestionsCount")(e.target.value)}
+                onBlur={() => markTouched("aiSuggestionsCount")}
+                className={fieldClass("aiSuggestionsCount")}
+              />
             </FormField>
           </div>
         </FormSection>

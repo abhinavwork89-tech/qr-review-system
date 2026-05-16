@@ -8,7 +8,6 @@ import {
   parseIdentityTypeInput,
 } from "@/lib/business/identity";
 import { sanitizeBusinessInsertPayload } from "@/lib/security/input-sanitize";
-import { listBusinessTypeSelectOptions } from "@/lib/data/business-types-admin";
 import { normalizeDialCode } from "@/lib/phone/mobile";
 import {
   clampWhatsAppLocalInput,
@@ -22,6 +21,8 @@ import {
   validateMasterQrForPersist,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
+import { normalizeAiReviewLanguage } from "@/lib/ai/language";
+import { requireAdminSession } from "@/lib/require-admin-session";
 
 const SLUG_SUFFIX_LEN = 4;
 const SLUG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
@@ -40,6 +41,9 @@ function readBool(v: unknown, defaultValue: boolean): boolean {
 
 export async function POST(request: Request) {
   try {
+    const deny = await requireAdminSession();
+    if (deny) return deny;
+
     let json: unknown;
     try {
       json = await request.json();
@@ -97,6 +101,10 @@ export async function POST(request: Request) {
           call_country_code: row.call_country_code,
           call_number: row.call_number,
           master_qr_type: row.master_qr_type,
+          ai_enabled: row.ai_enabled,
+          ai_review_language: row.ai_review_language,
+          ai_daily_limit: row.ai_daily_limit,
+          ai_suggestions_count: row.ai_suggestions_count,
         })
         .select("id")
         .single();
@@ -133,28 +141,20 @@ export async function POST(request: Request) {
         continue;
       }
 
+      console.error("[business/create]", error?.message, error?.code ?? "");
       const status =
         error?.code === "23503" || error?.code === "23514" ? 400 : 500;
       return NextResponse.json(
-        {
-          error: error?.message ?? "Database error",
-          ...(error?.code ? { code: error.code } : {}),
-        },
+        { error: status === 400 ? "Invalid business data" : "Server error" },
         { status },
       );
     }
 
-    return NextResponse.json(
-      {
-        error: lastError?.message ?? "Could not allocate a unique slug",
-        ...(lastError?.code ? { code: lastError.code } : {}),
-      },
-      { status: 409 },
-    );
+    console.error("[business/create] slug", lastError?.message);
+    return NextResponse.json({ error: "Could not allocate a unique slug" }, { status: 409 });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[business/create]", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
 
@@ -187,6 +187,10 @@ type BusinessInsertPayload = {
   call_country_code: string;
   call_number: string | null;
   master_qr_type: MasterQrType;
+  ai_enabled: boolean;
+  ai_review_language: string;
+  ai_daily_limit: number;
+  ai_suggestions_count: number | null;
 };
 
 type ParseOk = { ok: true; data: BusinessInsertPayload };
@@ -363,6 +367,35 @@ async function parseBusinessBody(
     fields.master_qr_type = masterValErr;
   }
 
+  const ai_enabled = readBool(o.ai_enabled ?? o.aiEnabled, false);
+  const ai_review_language = normalizeAiReviewLanguage(o.ai_review_language ?? o.aiReviewLanguage);
+  const aiDailyRaw = o.ai_daily_limit ?? o.aiDailyLimit;
+  let ai_daily_limit = 50;
+  if (aiDailyRaw !== undefined && aiDailyRaw !== null && String(aiDailyRaw).trim() !== "") {
+    const n =
+      typeof aiDailyRaw === "number" && Number.isInteger(aiDailyRaw)
+        ? aiDailyRaw
+        : Number.parseInt(String(aiDailyRaw).trim(), 10);
+    if (!Number.isInteger(n) || n < 1 || n > 50_000) {
+      fields.ai_daily_limit = "Must be an integer from 1 to 50000";
+    } else {
+      ai_daily_limit = n;
+    }
+  }
+  const aiSugRaw = o.ai_suggestions_count ?? o.aiSuggestionsCount;
+  let ai_suggestions_count: number | null = null;
+  if (aiSugRaw !== undefined && aiSugRaw !== null && String(aiSugRaw).trim() !== "") {
+    const n =
+      typeof aiSugRaw === "number" && Number.isInteger(aiSugRaw)
+        ? aiSugRaw
+        : Number.parseInt(String(aiSugRaw).trim(), 10);
+    if (!Number.isInteger(n) || n < 1 || n > 20) {
+      fields.ai_suggestions_count = "Must be 1–20 or omitted for plan default";
+    } else {
+      ai_suggestions_count = n;
+    }
+  }
+
   const logo_url = readOptionalUrl(o.logo_url);
   if (logo_url === "__invalid__") {
     fields.logo_url = "Must be a valid URL";
@@ -476,6 +509,10 @@ async function parseBusinessBody(
           ? null
           : clientPhotoParsed,
       master_qr_type: masterTypeResolved,
+      ai_enabled,
+      ai_review_language,
+      ai_daily_limit,
+      ai_suggestions_count,
     },
   };
 }

@@ -6,16 +6,14 @@ import { AdminTopbar } from "@/components/admin/admin-topbar";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
-
-  useEffect(() => {
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(() => {
+    if (typeof window === "undefined") return false;
     try {
-      const saved = window.localStorage.getItem("admin:sidebar:collapsed");
-      setDesktopSidebarCollapsed(saved === "1");
+      return window.localStorage.getItem("admin:sidebar:collapsed") === "1";
     } catch {
-      // ignore storage failures
+      return false;
     }
-  }, []);
+  });
 
   useEffect(() => {
     try {

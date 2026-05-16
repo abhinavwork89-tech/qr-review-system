@@ -3,6 +3,14 @@ import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
 import { parseRewardClaimBody } from "@/lib/validation/reward-claim-post";
+import { enforcePublicRateLimits } from "@/lib/security/enforce-public-rate-limit";
+import {
+  consumePublicRateLimit,
+  getClientIp,
+  rateLimitExceededResponse,
+} from "@/lib/security/public-rate-limit";
+import { createRouteLogger } from "@/lib/logging/app-logger";
+import { rejectOversizedBody } from "@/lib/security/request-body-limit";
 
 export const runtime = "nodejs";
 
@@ -28,7 +36,16 @@ function extractRewardsFromChannels(channels: unknown): {
 }
 
 export async function POST(request: Request) {
+  const log = createRouteLogger("reward", "/api/reward/claim", request.headers);
   try {
+    const tooLarge = rejectOversizedBody(request, 2048);
+    if (tooLarge) return tooLarge;
+
+    const limited = enforcePublicRateLimits(request.headers, [
+      { prefix: "reward:ip", max: 40, windowMs: 10 * 60_000 },
+    ]);
+    if (limited) return limited;
+
     let json: unknown;
     try {
       json = await request.json();
@@ -43,6 +60,12 @@ export async function POST(request: Request) {
 
     const { business_id, kind } = parsed.data;
 
+    const ip = getClientIp(request.headers);
+    const burst = consumePublicRateLimit(`reward:burst:${ip}:${business_id}:${kind}`, 2, 60_000);
+    if (!burst.allowed) {
+      return rateLimitExceededResponse(burst.retryAfterSec);
+    }
+
     const supabase = createServiceRoleClient();
     const { data: row, error } = await supabase
       .from("businesses")
@@ -51,7 +74,7 @@ export async function POST(request: Request) {
       .maybeSingle();
 
     if (error) {
-      console.error("[reward/claim]", error.message);
+      log.error("business_lookup_failed", {});
       return NextResponse.json({ error: "Server error" }, { status: 500 });
     }
     if (!row) {
@@ -87,7 +110,7 @@ export async function POST(request: Request) {
       rewards,
     });
   } catch (e) {
-    console.error("[reward/claim]", e);
+    log.error("unhandled", {}, e);
     return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

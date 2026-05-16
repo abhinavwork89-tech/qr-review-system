@@ -25,7 +25,8 @@ export function BusinessTypesManager({ initialTypes, loadError }: Props) {
   const [deleteTarget, setDeleteTarget] = useState<BusinessTypeOption | null>(null);
 
   useEffect(() => {
-    setTypes(initialTypes);
+    const syncId = window.setTimeout(() => setTypes(initialTypes), 0);
+    return () => window.clearTimeout(syncId);
   }, [initialTypes]);
 
   const refresh = useCallback(() => {

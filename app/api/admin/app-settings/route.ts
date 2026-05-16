@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
-import { createServiceRoleClient } from "@/lib/supabase/server";
 import { getAppSettingsPublic } from "@/lib/data/app-settings";
+import { patchAppSettingsSingleton } from "@/lib/data/app-settings-singleton";
 import { requireAdminSession } from "@/lib/require-admin-session";
 import {
   normalizeSafeHttpUrl,
@@ -146,50 +146,17 @@ export async function PATCH(request: Request) {
     }
   }
 
-  const supabase = createServiceRoleClient();
-  const rowPayload = {
+  const result = await patchAppSettingsSingleton({
     branding_logo_url: brandingLogoUrl,
     powered_by_url: poweredByStored,
     copyright_text: copyrightText,
     copyright_year: copyrightYear,
-    updated_at: new Date().toISOString(),
-  };
+  });
 
-  const { data: rowWithId, error: selectIdErr } = await supabase
-    .from("app_settings")
-    .select("id")
-    .limit(1)
-    .maybeSingle();
-
-  let error = selectIdErr ?? null;
-
-  if (!error) {
-    const existingId =
-      rowWithId &&
-      typeof rowWithId === "object" &&
-      rowWithId !== null &&
-      "id" in rowWithId &&
-      (rowWithId as { id: unknown }).id !== null &&
-      (rowWithId as { id: unknown }).id !== undefined
-        ? (rowWithId as { id: string | number }).id
-        : null;
-
-    if (existingId !== null) {
-      const { error: updErr } = await supabase
-        .from("app_settings")
-        .update(rowPayload)
-        .eq("id", existingId);
-      error = updErr ?? null;
-    } else {
-      const { error: insErr } = await supabase.from("app_settings").insert(rowPayload);
-      error = insErr ?? null;
-    }
-  }
-
-  if (error) {
+  if (!result.ok) {
     return NextResponse.json(
-      { error: error.message, code: error.code },
-      { status: error.code === "42P01" ? 503 : 500 },
+      { error: result.error, code: result.code },
+      { status: result.code === "42P01" ? 503 : 500 },
     );
   }
 

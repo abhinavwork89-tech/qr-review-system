@@ -7,6 +7,11 @@ import {
   type GetBusinessBySlugResult,
 } from "@/lib/data/business";
 import { activeBusinessToDisplay } from "@/lib/review/display-model";
+import { getGlobalAISettings } from "@/lib/ai/global-settings";
+import {
+  auditPublicAiEligibility,
+  logPublicAiEligibilityAudit,
+} from "@/lib/ai/audit-public-ai-eligibility";
 import { getServerRequestPublicOrigin } from "@/lib/scan/server-public-origin";
 
 type PageProps = {
@@ -58,8 +63,27 @@ export default async function ReviewPage({ params }: PageProps) {
     return <InactiveBusinessView />;
   }
 
-  const publicOrigin = await getServerRequestPublicOrigin();
-  const display = activeBusinessToDisplay(result.business, { publicOrigin });
+  const [publicOrigin, globalAi] = await Promise.all([
+    getServerRequestPublicOrigin(),
+    getGlobalAISettings(),
+  ]);
+  const display = activeBusinessToDisplay(result.business, { publicOrigin, globalAi });
+
+  if (
+    process.env.AI_REVIEW_DEBUG === "1" ||
+    process.env.NEXT_PUBLIC_AI_REVIEW_DEBUG === "1"
+  ) {
+    const audit = auditPublicAiEligibility(globalAi, result.business);
+    logPublicAiEligibilityAudit(slug, audit);
+    if (audit.aiReviewGenerationEnabled !== display.aiReviewGenerationEnabled) {
+      console.warn("[ai-review-audit] display flag mismatch", {
+        auditEnabled: audit.aiReviewGenerationEnabled,
+        displayEnabled: display.aiReviewGenerationEnabled,
+        aiSuggestionCount: display.aiSuggestionCount,
+        aiGenerateLanguage: display.aiGenerateLanguage,
+      });
+    }
+  }
 
   if (process.env.MASTER_QR_DEBUG === "1") {
     console.warn("[master-qr:review-page]", {

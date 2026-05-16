@@ -1,4 +1,6 @@
+import Image from "next/image";
 import { getAppSettingsPublic } from "@/lib/data/app-settings";
+import { isOptimizableRemoteImageUrl } from "@/lib/images/optimizable-image-url";
 
 export async function OneCoreFooter() {
   const s = await getAppSettingsPublic();
@@ -26,12 +28,25 @@ export async function OneCoreFooter() {
           <span className="text-[13px] leading-snug text-[var(--review-muted)] sm:text-sm">
             Reviews powered by
           </span>
-          {s.brandingLogoUrl ? (
+          {s.brandingLogoUrl && isOptimizableRemoteImageUrl(s.brandingLogoUrl) ? (
+            <span className="relative inline-flex h-7 w-[120px] max-w-[160px] items-center">
+              <Image
+                src={s.brandingLogoUrl}
+                alt=""
+                width={160}
+                height={28}
+                className="h-7 w-auto max-h-7 max-w-[160px] object-contain object-center"
+                sizes="160px"
+              />
+            </span>
+          ) : s.brandingLogoUrl ? (
             <span className="relative inline-flex h-7 max-w-[160px] items-center">
-              {/* eslint-disable-next-line @next/next/no-img-element -- URL comes from admin-configured storage */}
+              {/* eslint-disable-next-line @next/next/no-img-element -- non-Supabase branding URL */}
               <img
                 src={s.brandingLogoUrl}
                 alt=""
+                loading="lazy"
+                decoding="async"
                 className="h-7 w-auto max-h-7 max-w-[160px] object-contain object-center"
               />
             </span>

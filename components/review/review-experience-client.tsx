@@ -3,8 +3,11 @@
 import type { ReactNode } from "react";
 import { BannerSlider } from "@/components/banner-slider";
 import { BusinessBrandHeader } from "@/components/review/business-brand-header";
-import { ReviewDelayedModal } from "@/components/review/review-delayed-modal";
-import { ReviewDigitalResources } from "@/components/review/review-digital-resources";
+import {
+  ReviewDelayedModalLazy,
+  ReviewDigitalResourcesLazy,
+  ReviewRewardGamesLazy,
+} from "@/components/review/review-below-fold-lazy";
 import { ReviewChannels } from "@/components/review/review-channels";
 import {
   ReviewI18nProvider,
@@ -13,7 +16,6 @@ import {
 import { ReviewLanguageSwitcher } from "@/components/review/review-language-switcher";
 import { ReviewPageFooter } from "@/components/review/review-page-footer";
 import { ReviewRatingPlaceholder } from "@/components/review/review-rating-placeholder";
-import { ReviewRewardGames } from "@/components/review/review-reward-games";
 import { ScanTracker } from "@/components/review/scan-tracker";
 import type { AppSettingsPublic } from "@/lib/data/app-settings";
 import type { BannerSlide } from "@/components/banner-slider";
@@ -58,7 +60,7 @@ export function ReviewExperienceClient({
         controls={switcher}
       />
 
-      <ReviewDelayedModal
+      <ReviewDelayedModalLazy
         googleReviewUrl={display.googleReviewUrl}
         channels={display.channels}
         directRedirect={display.directRedirect}
@@ -80,12 +82,12 @@ export function ReviewExperienceClient({
 
           {display.resourceUrls.length > 0 ? (
             <section className="w-full">
-              <ReviewDigitalResources urls={display.resourceUrls} />
+              <ReviewDigitalResourcesLazy urls={display.resourceUrls} />
             </section>
           ) : null}
 
           <section className="w-full">
-            <ReviewRewardGames
+            <ReviewRewardGamesLazy
               key={display.businessId}
               businessId={display.businessId}
               spinEnabled={display.spinEnabled}
@@ -103,6 +105,9 @@ export function ReviewExperienceClient({
               skipPreferredAutoRedirect={display.directOutboundFromReviewPage}
               allowLowRatingRedirect={display.allowLowRatingRedirect}
               channels={display.channels}
+              aiReviewGenerationEnabled={display.aiReviewGenerationEnabled}
+              aiGenerateLanguage={display.aiGenerateLanguage}
+              aiSuggestionCount={display.aiSuggestionCount}
             />
           </section>
         </div>

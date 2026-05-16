@@ -1,7 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import type { AppSettingsPublic } from "@/lib/data/app-settings";
 import { useReviewT } from "@/components/review/review-i18n-provider";
+import { isOptimizableRemoteImageUrl } from "@/lib/images/optimizable-image-url";
 
 export function ReviewPageFooter({ settings }: { settings: AppSettingsPublic }) {
   const t = useReviewT();
@@ -31,13 +33,26 @@ export function ReviewPageFooter({ settings }: { settings: AppSettingsPublic }) 
             {t("footer.poweredBy")}
           </span>
           {s.brandingLogoUrl ? (
-            <span className="relative inline-flex h-7 max-w-[160px] items-center">
-              {/* eslint-disable-next-line @next/next/no-img-element -- URL comes from admin-configured storage */}
-              <img
-                src={s.brandingLogoUrl}
-                alt=""
-                className="h-7 w-auto max-h-7 max-w-[160px] object-contain object-center"
-              />
+            <span className="relative inline-flex h-7 w-[120px] max-w-[160px] items-center">
+              {isOptimizableRemoteImageUrl(s.brandingLogoUrl) ? (
+                <Image
+                  src={s.brandingLogoUrl}
+                  alt=""
+                  width={160}
+                  height={28}
+                  className="h-7 w-auto max-h-7 max-w-[160px] object-contain object-center"
+                  sizes="160px"
+                />
+              ) : (
+                /* eslint-disable-next-line @next/next/no-img-element -- non-Supabase branding URL */
+                <img
+                  src={s.brandingLogoUrl}
+                  alt=""
+                  loading="lazy"
+                  decoding="async"
+                  className="h-7 w-auto max-h-7 max-w-[160px] object-contain object-center"
+                />
+              )}
             </span>
           ) : null}
           <a

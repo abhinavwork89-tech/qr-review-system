@@ -1,7 +1,9 @@
 "use client";
 
+import Image from "next/image";
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { useReviewT } from "@/components/review/review-i18n-provider";
+import { isOptimizableRemoteImageUrl } from "@/lib/images/optimizable-image-url";
 import { isProbablyImageResourceUrl } from "@/lib/review/parse-resource-urls";
 
 type Props = {
@@ -28,7 +30,7 @@ export function ReviewDigitalResources({ urls }: Props) {
       <ul className="mt-4 grid list-none grid-cols-1 gap-3 sm:grid-cols-2" role="list">
         {safe.map((url, i) => (
           <li key={`${baseId}-res-${i}`} className="min-w-0">
-            <ResourceTile url={url} labelOpen={t("resources.open")} />
+            <ResourceTile key={url} url={url} labelOpen={t("resources.open")} />
           </li>
         ))}
       </ul>
@@ -39,19 +41,18 @@ export function ReviewDigitalResources({ urls }: Props) {
 function ResourceTile({ url, labelOpen }: { url: string; labelOpen: string }) {
   const t = useReviewT();
   const isImg = isProbablyImageResourceUrl(url);
+  const useNextImage = isImg && isOptimizableRemoteImageUrl(url);
   const [broken, setBroken] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const loadTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
-    setBroken(false);
-    setLoaded(false);
     if (!isImg) return;
     loadTimerRef.current = setTimeout(() => setLoaded(true), 12_000);
     return () => {
       if (loadTimerRef.current) clearTimeout(loadTimerRef.current);
     };
-  }, [url, isImg]);
+  }, [isImg]);
 
   const onImgLoad = useCallback(() => {
     if (loadTimerRef.current) {
@@ -77,17 +78,32 @@ function ResourceTile({ url, labelOpen }: { url: string; labelOpen: string }) {
                 aria-hidden
               />
             ) : null}
-            <img
-              src={url}
-              alt=""
-              loading="lazy"
-              decoding="async"
-              onLoad={onImgLoad}
-              onError={() => setBroken(true)}
-              className={`h-full w-full object-contain transition-opacity duration-300 ${
-                loaded ? "opacity-100" : "opacity-0"
-              }`}
-            />
+            {useNextImage ? (
+              <Image
+                src={url}
+                alt=""
+                fill
+                sizes="(max-width: 640px) 100vw, 50vw"
+                className={`object-contain transition-opacity duration-300 ${
+                  loaded ? "opacity-100" : "opacity-0"
+                }`}
+                onLoad={onImgLoad}
+                onError={() => setBroken(true)}
+              />
+            ) : (
+              <img
+                src={url}
+                alt=""
+                loading="lazy"
+                decoding="async"
+                sizes="(max-width: 640px) 100vw, 50vw"
+                onLoad={onImgLoad}
+                onError={() => setBroken(true)}
+                className={`h-full w-full max-h-[280px] object-contain transition-opacity duration-300 ${
+                  loaded ? "opacity-100" : "opacity-0"
+                }`}
+              />
+            )}
           </div>
           <div className="flex items-center justify-between gap-2 border-t border-[color-mix(in_srgb,var(--review-fg)_10%,transparent)] px-3 py-2">
             <span className="min-w-0 truncate text-xs text-[var(--review-muted)]" title={url}>

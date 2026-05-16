@@ -7,7 +7,7 @@ export async function GET() {
     const settings = await getAppSettingsPublic();
     return NextResponse.json(settings, { status: 200 });
   } catch (err) {
-    const message = err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[app-settings]", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

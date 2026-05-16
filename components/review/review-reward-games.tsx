@@ -6,6 +6,7 @@ import { postPublicRewardClaim } from "@/lib/reward/public-reward-claim";
 import { playReviewSubmitSuccessConfetti } from "@/lib/review/review-confetti";
 import { RewardScratchGame } from "@/components/review/rewards/reward-scratch-game";
 import { RewardSpinWheel } from "@/components/review/rewards/reward-spin-wheel";
+import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
 
 type Props = {
   businessId: string;
@@ -54,6 +55,8 @@ export function ReviewRewardGames({
 
   const celebrationFired = useRef(false);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+
+  useBodyScrollLock(phase !== "closed");
 
   const reducedMotion = useMemo(() => {
     if (typeof window === "undefined") return false;
@@ -117,6 +120,14 @@ export function ReviewRewardGames({
     playReviewSubmitSuccessConfetti();
   }, [phase, prize]);
 
+  const onSpinAnimationDone = useCallback(() => {
+    setPhase("result");
+  }, []);
+
+  const onScratchRevealDone = useCallback(() => {
+    setPhase("result");
+  }, []);
+
   if (rewards.length === 0) return null;
   if (!spinEnabled && !scratchEnabled) return null;
 
@@ -148,14 +159,6 @@ export function ReviewRewardGames({
       setIsClaiming(false);
     }
   };
-
-  const onSpinAnimationDone = useCallback(() => {
-    setPhase("result");
-  }, []);
-
-  const onScratchRevealDone = useCallback(() => {
-    setPhase("result");
-  }, []);
 
   const showResult = phase === "result" && prize;
   const better = prize ? isBetterLuckMessage(prize) : false;
@@ -202,7 +205,7 @@ export function ReviewRewardGames({
 
       {phase !== "closed" ? (
         <div
-          className="fixed inset-0 z-[93] flex items-center justify-center bg-zinc-950/50 px-3 py-6 backdrop-blur-[2px]"
+          className="fixed inset-0 z-[93] flex items-center justify-center bg-zinc-950/50 px-3 py-6 backdrop-blur-[2px] [contain:strict]"
           role="presentation"
           onClick={() => {
             if (phase !== "loading") resetModal();
@@ -212,7 +215,7 @@ export function ReviewRewardGames({
             role="dialog"
             aria-modal="true"
             aria-labelledby={titleId}
-            className={`flex max-h-[min(92vh,680px)] w-full max-w-md flex-col overflow-x-hidden overflow-y-auto rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_98%,var(--review-fg))] p-4 shadow-2xl sm:p-6 ${
+            className={`flex max-h-[min(92dvh,680px)] w-full max-w-md flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_98%,var(--review-fg))] p-4 shadow-2xl sm:p-6 ${
               phase === "loading" || phase === "playing" || phase === "result"
                 ? "min-h-[min(432px,68svh)] justify-center"
                 : ""

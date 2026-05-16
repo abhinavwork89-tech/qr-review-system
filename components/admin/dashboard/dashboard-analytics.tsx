@@ -6,14 +6,23 @@ import {
   MessageSquareText,
   Star,
   Store,
+  UserCheck,
+  UserX,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ChartCard } from "@/components/admin/dashboard/chart-card";
 import {
-  DashboardTrendChart,
-  type TrendGranularity,
-} from "@/components/admin/dashboard/dashboard-trend-chart";
+  LazyDashboardAiSection,
+  LazyDashboardSentimentChart,
+  LazyDashboardTrendChart,
+} from "@/components/admin/dashboard/dashboard-charts-lazy";
+import type { TrendGranularity } from "@/components/admin/dashboard/dashboard-trend-chart";
 import { StatsCard } from "@/components/admin/dashboard/stats-card";
+import type {
+  DashboardAiAnalytics,
+  ReviewSentimentCounts,
+  SubscriptionCounts,
+} from "@/lib/admin/analytics-extensions";
 import { displayQrTypeLabel } from "@/lib/scan/qr-types";
 
 type RangeDays = 1 | 7 | 30;
@@ -52,6 +61,9 @@ type AnalyticsJson = {
   }>;
   trendGranularity?: TrendGranularity;
   trendSeries?: unknown;
+  sentiment?: ReviewSentimentCounts;
+  subscriptions?: SubscriptionCounts;
+  ai?: DashboardAiAnalytics | null;
 };
 
 const RANGE_OPTIONS: { days: RangeDays; label: string }[] = [
@@ -97,7 +109,6 @@ export function DashboardAnalytics() {
 
     const run = async () => {
       setLoading(true);
-      setData(null);
       setError(null);
       try {
         const res = await fetch(`/api/admin/analytics?days=${days}`, {
@@ -132,10 +143,10 @@ export function DashboardAnalytics() {
         }
         setData(parsed);
       } catch (err) {
-        if (!active) return;
         if (err instanceof DOMException && err.name === "AbortError") {
           return;
         }
+        if (!active) return;
         setData(null);
         setError("Network error. Try again.");
       } finally {
@@ -162,7 +173,7 @@ export function DashboardAnalytics() {
     return Object.entries(data.scansByQrType)
       .map(([key, count]) => ({ key, count }))
       .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
-  }, [data?.scansByQrType]);
+  }, [data]);
 
   const maxQr = useMemo(
     () => qrRows.reduce((m, r) => Math.max(m, r.count), 0),
@@ -174,21 +185,21 @@ export function DashboardAnalytics() {
         {
           title: "Total Businesses",
           value: formatNumber(data.totalBusinesses),
-          growth: "0%",
+          growth: "—",
           growthCaption: `Non-deleted businesses · ${rangeLabel}`,
           icon: Building2,
         },
         {
           title: "Total Scans",
           value: formatNumber(data.totalScans),
-          growth: "0%",
+          growth: "—",
           growthCaption: rangeLabel,
           icon: Store,
         },
         {
           title: "Total Reviews",
           value: formatNumber(data.totalReviews),
-          growth: "0%",
+          growth: "—",
           growthCaption: rangeLabel,
           icon: MessageSquareText,
         },
@@ -196,14 +207,14 @@ export function DashboardAnalytics() {
           title: "Avg. rating",
           value:
             data.averageRating != null ? formatPercent(data.averageRating) : "—",
-          growth: "0%",
+          growth: "—",
           growthCaption: rangeLabel,
           icon: Star,
         },
         {
           title: "Conversion rate",
           value: `${formatPercent(data.conversionRate)}%`,
-          growth: "0%",
+          growth: "—",
           growthCaption: "Reviews ÷ scans in this period",
           icon: CircleDollarSign,
         },
@@ -253,7 +264,7 @@ export function DashboardAnalytics() {
         </div>
       ) : null}
 
-      {loading ? (
+      {loading && !data ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div
@@ -280,6 +291,39 @@ export function DashboardAnalytics() {
           No analytics data
         </div>
       )}
+
+      {data?.subscriptions ? (
+        <div className="grid grid-cols-2 gap-4 lg:max-w-xl">
+          <StatsCard
+            title="Active subscriptions"
+            value={formatNumber(data.subscriptions.active)}
+            growth="—"
+            growthCaption="Non-deleted · status active"
+            icon={UserCheck}
+          />
+          <StatsCard
+            title="Inactive subscriptions"
+            value={formatNumber(data.subscriptions.inactive)}
+            growth="—"
+            growthCaption="Non-deleted · status inactive"
+            icon={UserX}
+          />
+        </div>
+      ) : null}
+
+      <LazyDashboardAiSection ai={data?.ai} rangeLabel={rangeLabel} loading={loading} />
+
+      <ChartCard
+        title="Review sentiment"
+        subtitle={`Positive 4–5★ · Neutral 3★ · Negative 1–2★ · ${rangeLabel}`}
+        hasData={!loading && (data?.sentiment?.total ?? 0) > 0}
+      >
+        {loading && !data?.sentiment ? (
+          <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
+        ) : data?.sentiment ? (
+          <LazyDashboardSentimentChart sentiment={data.sentiment} rangeLabel={rangeLabel} />
+        ) : null}
+      </ChartCard>
 
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="xl:col-span-2 space-y-4">
@@ -416,10 +460,10 @@ export function DashboardAnalytics() {
         }`}
         hasData={trendCardReady}
       >
-        <DashboardTrendChart
+        <LazyDashboardTrendChart
           granularity={trendGranularity}
           series={data?.trendSeries}
-          loading={loading}
+          loading={loading && !data?.trendSeries}
           rangeLabel={rangeLabel}
         />
       </ChartCard>

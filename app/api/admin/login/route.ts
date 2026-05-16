@@ -4,8 +4,21 @@ import {
   ADMIN_SESSION_COOKIE_VALUE,
   getAdminAuthEnv,
 } from "@/lib/admin-auth";
+import { enforcePublicRateLimits } from "@/lib/security/enforce-public-rate-limit";
+import { createRouteLogger } from "@/lib/logging/app-logger";
+import { getClientIp } from "@/lib/security/public-rate-limit";
+import { rejectOversizedBody } from "@/lib/security/request-body-limit";
 
 export async function POST(request: Request) {
+  const log = createRouteLogger("auth", "/api/admin/login", request.headers);
+  const tooLarge = rejectOversizedBody(request, 2048);
+  if (tooLarge) return tooLarge;
+
+  const limited = enforcePublicRateLimits(request.headers, [
+    { prefix: "admin-login:ip", max: 12, windowMs: 15 * 60_000 },
+  ]);
+  if (limited) return limited;
+
   let json: unknown;
   try {
     json = await request.json();
@@ -30,8 +43,11 @@ export async function POST(request: Request) {
 
   const expected = getAdminAuthEnv();
   if (email !== expected.email || password !== expected.password) {
+    log.warn("login_failed", { ip: getClientIp(request.headers) });
     return NextResponse.json({ error: "Invalid credentials" }, { status: 401 });
   }
+
+  log.info("login_success", { ip: getClientIp(request.headers) });
 
   const res = NextResponse.json({ ok: true }, { status: 200 });
   res.cookies.set({

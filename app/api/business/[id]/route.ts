@@ -26,6 +26,8 @@ import {
   validateMasterQrForPersist,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
+import { normalizeAiReviewLanguage } from "@/lib/ai/language";
+import { requireAdminSession } from "@/lib/require-admin-session";
 
 type Params = {
   params: Promise<{ id: string }>;
@@ -33,6 +35,9 @@ type Params = {
 
 export async function DELETE(_request: Request, { params }: Params) {
   try {
+    const deny = await requireAdminSession();
+    if (deny) return deny;
+
     const { id } = await params;
     const businessId = id?.trim();
     if (!businessId) {
@@ -48,12 +53,10 @@ export async function DELETE(_request: Request, { params }: Params) {
       .maybeSingle();
 
     if (error) {
+      console.error("[business/delete]", error.message, error.code ?? "");
       const status = error.code === "23503" ? 409 : 500;
       return NextResponse.json(
-        {
-          error: error.message,
-          ...(error.code ? { code: error.code } : {}),
-        },
+        { error: status === 409 ? "Cannot delete business" : "Server error" },
         { status },
       );
     }
@@ -64,14 +67,16 @@ export async function DELETE(_request: Request, { params }: Params) {
 
     return NextResponse.json({ ok: true }, { status: 200 });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[business/delete]", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
 
 export async function PATCH(request: Request, { params }: Params) {
   try {
+    const deny = await requireAdminSession();
+    if (deny) return deny;
+
     const { id } = await params;
     const businessId = id?.trim();
     if (!businessId) {
@@ -102,7 +107,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const { data: currentRow, error: currentError } = await supabase
       .from("businesses")
       .select(
-        "id,status,is_active,plan_type,name,brand_name,email,logo_url,primary_color,slug,identity_type,identity_number,identity_proof_urls,client_photo_url,channels,whatsapp_country_code,whatsapp_number,google_url,master_qr_type,call_enabled,call_country_code,call_number",
+        "id,status,is_active,plan_type,name,brand_name,email,logo_url,primary_color,slug,identity_type,identity_number,identity_proof_urls,client_photo_url,channels,whatsapp_country_code,whatsapp_number,google_url,master_qr_type,call_enabled,call_country_code,call_number,ai_enabled,ai_review_language,ai_daily_limit,ai_suggestions_count",
       )
       .eq("id", businessId)
       .maybeSingle();
@@ -384,13 +389,11 @@ export async function PATCH(request: Request, { params }: Params) {
       .maybeSingle();
 
     if (error) {
+      console.error("[business/patch]", error.message, error.code ?? "");
       const status =
         error.code === "23503" || error.code === "23514" ? 400 : 500;
       return NextResponse.json(
-        {
-          error: error.message,
-          ...(error.code ? { code: error.code } : {}),
-        },
+        { error: status === 400 ? "Invalid update" : "Server error" },
         { status },
       );
     }
@@ -415,9 +418,8 @@ export async function PATCH(request: Request, { params }: Params) {
       { status: 200 },
     );
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[business/patch]", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
 
@@ -742,6 +744,69 @@ function parseBusinessPatchBody(body: unknown): ParseOk | ParseErr {
       } else {
         patch.master_qr_type = t;
       }
+    }
+  }
+
+  if ("ai_enabled" in input || "aiEnabled" in input) {
+    const v = "ai_enabled" in input ? input.ai_enabled : input.aiEnabled;
+    if (typeof v === "boolean") {
+      patch.ai_enabled = v;
+    } else if (v === "true" || v === "false") {
+      patch.ai_enabled = v === "true";
+    } else {
+      fields.ai_enabled = "Must be a boolean";
+    }
+  }
+
+  if ("ai_review_language" in input || "aiReviewLanguage" in input) {
+    const raw =
+      "ai_review_language" in input ? input.ai_review_language : input.aiReviewLanguage;
+    if (typeof raw !== "string") {
+      fields.ai_review_language = "Must be a string";
+    } else {
+      patch.ai_review_language = normalizeAiReviewLanguage(raw);
+    }
+  }
+
+  if ("ai_daily_limit" in input || "aiDailyLimit" in input) {
+    const raw = "ai_daily_limit" in input ? input.ai_daily_limit : input.aiDailyLimit;
+    let n: number | null = null;
+    if (typeof raw === "number" && Number.isInteger(raw)) n = raw;
+    else if (typeof raw === "string" && /^\d+$/.test(raw.trim())) {
+      n = Number.parseInt(raw.trim(), 10);
+    }
+    if (n === null) {
+      fields.ai_daily_limit = "Must be an integer";
+    } else if (n < 1 || n > 50_000) {
+      fields.ai_daily_limit = "Must be from 1 to 50000";
+    } else {
+      patch.ai_daily_limit = n;
+    }
+  }
+
+  if ("ai_suggestions_count" in input || "aiSuggestionsCount" in input) {
+    const raw =
+      "ai_suggestions_count" in input ? input.ai_suggestions_count : input.aiSuggestionsCount;
+    if (raw === null || raw === undefined || raw === "") {
+      patch.ai_suggestions_count = null;
+    } else if (typeof raw === "number" && Number.isInteger(raw)) {
+      if (raw < 1 || raw > 20) fields.ai_suggestions_count = "Must be 1–20 or empty for plan default";
+      else patch.ai_suggestions_count = raw;
+    } else if (typeof raw === "string") {
+      const t = raw.trim();
+      if (!t) patch.ai_suggestions_count = null;
+      else if (!/^\d+$/.test(t)) {
+        fields.ai_suggestions_count = "Must be an integer or empty";
+      } else {
+        const n = Number.parseInt(t, 10);
+        if (n < 1 || n > 20) {
+          fields.ai_suggestions_count = "Must be 1–20 or empty for plan default";
+        } else {
+          patch.ai_suggestions_count = n;
+        }
+      }
+    } else {
+      fields.ai_suggestions_count = "Invalid value";
     }
   }
 

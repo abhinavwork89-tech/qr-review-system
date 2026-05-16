@@ -173,6 +173,21 @@ export default async function BusinessDetailPage({ params, searchParams }: PageP
         identityProofUrls: asIdentityProofUrls(row.identity_proof_urls),
         clientPhotoUrl:
           typeof row.client_photo_url === "string" ? row.client_photo_url.trim() : "",
+        aiEnabled: row.ai_enabled === true,
+        aiReviewLanguage:
+          typeof row.ai_review_language === "string" &&
+          ["en", "hi", "hinglish"].includes(row.ai_review_language.trim().toLowerCase())
+            ? (row.ai_review_language.trim().toLowerCase() as "en" | "hi" | "hinglish")
+            : "en",
+        aiDailyLimit: String(
+          typeof row.ai_daily_limit === "number" && Number.isFinite(row.ai_daily_limit)
+            ? row.ai_daily_limit
+            : 50,
+        ),
+        aiSuggestionsCount:
+          row.ai_suggestions_count != null && typeof row.ai_suggestions_count === "number"
+            ? String(row.ai_suggestions_count)
+            : "",
       }}
     />
   );

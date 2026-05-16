@@ -79,6 +79,10 @@ function coerceBusinessRow(raw: Record<string, unknown>): BusinessRow {
     secondary_color: readNullableString(raw.secondary_color),
     language: readNullableString(raw.language),
     google_url: readNullableString(raw.google_url),
+    plan_type:
+      typeof raw.plan_type === "string" && raw.plan_type.trim()
+        ? raw.plan_type.trim()
+        : null,
     threshold: readNumberOrNull(raw.threshold),
     direct_redirect: readNullableBoolean(raw.direct_redirect),
     allow_low_rating_redirect: readNullableBoolean(
@@ -94,6 +98,16 @@ function coerceBusinessRow(raw: Record<string, unknown>): BusinessRow {
     banner_urls: bannerRaw,
     resource_urls: raw.resource_urls,
     master_qr_type: normalizeMasterQrType(raw.master_qr_type),
+    ai_enabled: readNullableBoolean(raw.ai_enabled),
+    ai_review_language: readNullableString(raw.ai_review_language),
+    ai_daily_limit:
+      typeof raw.ai_daily_limit === "number" && Number.isFinite(raw.ai_daily_limit)
+        ? raw.ai_daily_limit
+        : null,
+    ai_suggestions_count:
+      typeof raw.ai_suggestions_count === "number" && Number.isInteger(raw.ai_suggestions_count)
+        ? raw.ai_suggestions_count
+        : null,
   };
 }
 

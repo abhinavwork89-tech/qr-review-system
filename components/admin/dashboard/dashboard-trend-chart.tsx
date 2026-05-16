@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useId, useMemo, useState } from "react";
+import { memo, useCallback, useId, useMemo, useState } from "react";
 
 export type TrendGranularity = "hour" | "day";
 
@@ -105,7 +105,7 @@ function buildAreaPath(xs: number[], ys: number[], bottomY: number): string {
   return d;
 }
 
-export function DashboardTrendChart({
+export const DashboardTrendChart = memo(function DashboardTrendChart({
   granularity,
   series: seriesRaw,
   loading = false,
@@ -441,4 +441,4 @@ export function DashboardTrendChart({
       </div>
     </div>
   );
-}
+});

@@ -3,13 +3,32 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
 import { emailFlowErrorWithCause, emailFlowInfo } from "@/lib/email/email-flow-log";
 import { sendReviewEmail } from "@/lib/email/send-review-email";
+import { enforcePublicRateLimits } from "@/lib/security/enforce-public-rate-limit";
+import {
+  consumePublicRateLimit,
+  getClientIp,
+  rateLimitExceededResponse,
+} from "@/lib/security/public-rate-limit";
+import { rejectOversizedBody } from "@/lib/security/request-body-limit";
+import { createRouteLogger } from "@/lib/logging/app-logger";
 import {
   parseReviewPostBody,
   type ReviewPostPayload,
 } from "@/lib/validation/review-post";
 
+const REVIEW_BODY_MAX_BYTES = 32_768;
+
 export async function POST(request: Request) {
+  const log = createRouteLogger("review", "/api/review", request.headers);
   try {
+    const tooLarge = rejectOversizedBody(request, REVIEW_BODY_MAX_BYTES);
+    if (tooLarge) return tooLarge;
+
+    const limited = enforcePublicRateLimits(request.headers, [
+      { prefix: "review:ip", max: 25, windowMs: 10 * 60_000 },
+    ]);
+    if (limited) return limited;
+
     let json: unknown;
     try {
       json = await request.json();
@@ -19,6 +38,7 @@ export async function POST(request: Request) {
 
     const parsed = parseReviewPostBody(json);
     if (!parsed.ok) {
+      log.warn("validation_failed", { fields: parsed.fields });
       return NextResponse.json(
         { error: parsed.error, fields: parsed.fields },
         { status: 400 },
@@ -26,6 +46,16 @@ export async function POST(request: Request) {
     }
 
     const row: ReviewPostPayload = parsed.data;
+
+    const ip = getClientIp(request.headers);
+    const burst = consumePublicRateLimit(
+      `review:burst:${ip}:${row.business_id}`,
+      3,
+      60_000,
+    );
+    if (!burst.allowed) {
+      return rateLimitExceededResponse(burst.retryAfterSec);
+    }
 
     const supabase = createServiceRoleClient();
     const { data: businessRow } = await supabase
@@ -55,14 +85,11 @@ export async function POST(request: Request) {
       .select("id")
       .single();
     if (error) {
-      console.error("SUPABASE REVIEWS INSERT:", error.message, error);
-      return NextResponse.json(
-        {
-          error: error.message,
-          ...(error.code ? { code: error.code } : {}),
-        },
-        { status: error.code === "23503" ? 400 : 500 },
-      );
+      log.error("insert_failed", { code: error.code ?? null });
+      if (error.code === "23503") {
+        return NextResponse.json({ error: "Invalid business" }, { status: 400 });
+      }
+      return NextResponse.json({ error: "Could not save review" }, { status: 500 });
     }
 
     const rawId =
@@ -140,11 +167,10 @@ export async function POST(request: Request) {
       );
     }
 
+    log.info("submitted", { reviewId: insertedId, businessId: row.business_id });
     return NextResponse.json({ ok: true, id: insertedId }, { status: 201 });
   } catch (error) {
-    console.error("API ERROR:", error);
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    log.error("unhandled", {}, error);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

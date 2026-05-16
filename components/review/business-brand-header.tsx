@@ -30,7 +30,6 @@ export function BusinessBrandHeader({
               className="object-contain p-1.5"
               sizes="(max-width: 640px) 48px, 56px"
               priority
-              unoptimized
               onError={() => setLogoFailed(true)}
             />
           </div>

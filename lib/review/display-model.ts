@@ -19,6 +19,14 @@ import {
   resolveMasterOutboundUrl,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
+import type { AiReviewLanguage } from "@/lib/ai/constants";
+import { computePublicAiReviewGenerationEnabled } from "@/lib/ai/compute-public-ai-review-enabled";
+import type { GlobalAISettings } from "@/lib/ai/global-settings";
+import {
+  effectiveBusinessSuggestionsCount,
+  getBusinessAISettings,
+} from "@/lib/ai/business-settings";
+import { normalizeAiReviewLanguage } from "@/lib/ai/language";
 
 export type ReviewDisplayModel = {
   /** Supabase `businesses.id` for POST /api/review */
@@ -55,11 +63,19 @@ export type ReviewDisplayModel = {
   directOutboundFromReviewPage: boolean;
   /** Outbound URL before `/api/scan/out` tracking (resolved master + fallbacks). */
   masterOutboundUrl: string;
+  /** When true, public review page may call POST /api/ai/generate-review (server-gated). */
+  aiReviewGenerationEnabled: boolean;
+  /** Expected AI suggestion count (plan + optional business override); matches POST /api/ai/generate-review. */
+  aiSuggestionCount: number;
+  /** Language sent to the AI API (`en` | `hi` | `hinglish`) from business AI settings. */
+  aiGenerateLanguage: AiReviewLanguage;
 };
 
 export type ActiveBusinessDisplayOptions = {
   /** Request host origin for SSR (see `getServerRequestPublicOrigin`). */
   publicOrigin?: string | null;
+  /** Global AI settings from `app_settings` (SSR); used with business `ai_enabled`. */
+  globalAi?: GlobalAISettings | null;
 };
 
 function emptyChannel(): BusinessChannelLink {
@@ -129,6 +145,7 @@ function parseBannerUrls(raw: unknown): BannerSlide[] {
     .filter((u): u is string => typeof u === "string" && u.trim().length > 0)
     .map((src, i) => ({
       src: src.trim(),
+      /** No per-banner link in schema; slider uses non-navigating anchor. */
       href: "#",
       alt: `Promotion ${i + 1}`,
     }));
@@ -252,6 +269,10 @@ export function activeBusinessToDisplay(
   const brandName =
     business.brand_name?.trim() || business.name?.trim() || "Business";
   const googleReviewUrl = business.google_url?.trim() ?? "";
+  const aiGenerateLanguage = normalizeAiReviewLanguage(
+    business.ai_review_language ?? business.language,
+  );
+  const aiSuggestionCount = effectiveBusinessSuggestionsCount(business);
   return {
     businessId: business.id,
     brandName,
@@ -281,6 +302,12 @@ export function activeBusinessToDisplay(
     directOutboundFromReviewPage,
     masterOutboundUrl: masterOutbound,
     resourceUrls: parsePublicResourceUrls(business.resource_urls),
+    aiReviewGenerationEnabled: computePublicAiReviewGenerationEnabled(
+      options?.globalAi ?? null,
+      getBusinessAISettings(business).ai_enabled,
+    ),
+    aiSuggestionCount,
+    aiGenerateLanguage,
   };
 }
 

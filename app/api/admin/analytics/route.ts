@@ -1,6 +1,11 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { buildAnalyticsTrendSeries } from "@/lib/admin/analytics-trend";
+import {
+  buildDashboardAiAnalytics,
+  classifyReviewSentiment,
+  countSubscriptions,
+} from "@/lib/admin/analytics-extensions";
 import { normalizeBusinessStatus } from "@/lib/business/status";
 import { requireAdminSession } from "@/lib/require-admin-session";
 
@@ -34,32 +39,73 @@ export async function GET(request: Request) {
 
     const supabase = createServiceRoleClient();
 
-    const [{ data: scans, error: scanErr }, { data: reviews, error: revErr }] =
-      await Promise.all([
-        supabase
-          .from("scan_logs")
-          .select("id, business_id, qr_type, referrer, device, created_at")
-          .gte("created_at", since)
-          .order("created_at", { ascending: false }),
-        supabase
-          .from("reviews")
-          .select("id, business_id, rating, name, review_text, created_at")
-          .gte("created_at", since)
-          .order("created_at", { ascending: false }),
-      ]);
+    const [
+      scanCountRes,
+      reviewCountRes,
+      scansTrendRes,
+      reviewsTrendRes,
+      recentScansRes,
+      recentReviewsRes,
+      businessesRes,
+    ] = await Promise.all([
+      supabase
+        .from("scan_logs")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", since),
+      supabase
+        .from("reviews")
+        .select("id", { count: "exact", head: true })
+        .gte("created_at", since),
+      supabase
+        .from("scan_logs")
+        .select("business_id, qr_type, created_at")
+        .gte("created_at", since),
+      supabase
+        .from("reviews")
+        .select("business_id, rating, created_at")
+        .gte("created_at", since),
+      supabase
+        .from("scan_logs")
+        .select("id, business_id, qr_type, referrer, created_at")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(12),
+      supabase
+        .from("reviews")
+        .select("id, business_id, rating, name, review_text, created_at")
+        .gte("created_at", since)
+        .order("created_at", { ascending: false })
+        .limit(12),
+      supabase
+        .from("businesses")
+        .select("id, brand_name, name, status, is_active"),
+    ]);
 
-    if (scanErr) {
-      return NextResponse.json({ error: scanErr.message }, { status: 500 });
+    if (scansTrendRes.error) {
+      return NextResponse.json({ error: scansTrendRes.error.message }, { status: 500 });
     }
-    if (revErr) {
-      return NextResponse.json({ error: revErr.message }, { status: 500 });
+    if (reviewsTrendRes.error) {
+      return NextResponse.json({ error: reviewsTrendRes.error.message }, { status: 500 });
+    }
+    if (recentScansRes.error) {
+      return NextResponse.json({ error: recentScansRes.error.message }, { status: 500 });
+    }
+    if (recentReviewsRes.error) {
+      return NextResponse.json({ error: recentReviewsRes.error.message }, { status: 500 });
+    }
+    if (businessesRes.error) {
+      return NextResponse.json({ error: businessesRes.error.message }, { status: 500 });
     }
 
-    const scanList = scans ?? [];
-    const reviewList = reviews ?? [];
+    const scanList = scansTrendRes.data ?? [];
+    const reviewList = reviewsTrendRes.data ?? [];
 
-    const totalScans = scanList.length;
-    const totalReviews = reviewList.length;
+    const totalScans =
+      typeof scanCountRes.count === "number" ? scanCountRes.count : scanList.length;
+    const totalReviews =
+      typeof reviewCountRes.count === "number"
+        ? reviewCountRes.count
+        : reviewList.length;
 
     let sumRating = 0;
     for (const r of reviewList) {
@@ -95,20 +141,7 @@ export async function GET(request: Request) {
       reviewByBusiness.set(id, (reviewByBusiness.get(id) ?? 0) + 1);
     }
 
-    const statIds = new Set<string>([
-      ...scanByBusiness.keys(),
-      ...reviewByBusiness.keys(),
-    ]);
-
-    const { data: businessesRaw, error: bizErr } = await supabase
-      .from("businesses")
-      .select("id, brand_name, name, status, is_active");
-
-    if (bizErr) {
-      return NextResponse.json({ error: bizErr.message }, { status: 500 });
-    }
-
-    const businessRows = businessesRaw ?? [];
+    const businessRows = businessesRes.data ?? [];
     const visible = businessRows.filter((row) => {
       const status = normalizeBusinessStatus(row as Record<string, unknown>);
       return status !== "deleted";
@@ -145,10 +178,7 @@ export async function GET(request: Request) {
           a.name.localeCompare(b.name),
       );
 
-    const recentSlice = scanList.slice(0, 12);
-    const recentReviewsSlice = reviewList.slice(0, 12);
-
-    const recentScans = recentSlice.map((s) => {
+    const recentScans = (recentScansRes.data ?? []).map((s) => {
       const bid = typeof s.business_id === "string" ? s.business_id : "";
       return {
         id: typeof s.id === "string" ? s.id : "",
@@ -160,7 +190,7 @@ export async function GET(request: Request) {
       };
     });
 
-    const recentReviews = recentReviewsSlice.map((r) => {
+    const recentReviews = (recentReviewsRes.data ?? []).map((r) => {
       const bid = typeof r.business_id === "string" ? r.business_id : "";
       return {
         id: typeof r.id === "string" ? r.id : "",
@@ -180,6 +210,18 @@ export async function GET(request: Request) {
         reviews: reviewList,
       });
 
+    const sentiment = classifyReviewSentiment(reviewList);
+    const subscriptions = countSubscriptions(
+      visible as unknown as Record<string, unknown>[],
+    );
+
+    let ai: Awaited<ReturnType<typeof buildDashboardAiAnalytics>> | null = null;
+    try {
+      ai = await buildDashboardAiAnalytics(supabase, since, labelById);
+    } catch {
+      ai = null;
+    }
+
     return NextResponse.json(
       {
         days,
@@ -195,8 +237,16 @@ export async function GET(request: Request) {
         businessStats,
         trendGranularity,
         trendSeries,
+        sentiment,
+        subscriptions,
+        ai,
       },
-      { status: 200 },
+      {
+        status: 200,
+        headers: {
+          "Cache-Control": "private, max-age=15, stale-while-revalidate=30",
+        },
+      },
     );
   } catch (err) {
     const message = err instanceof Error ? err.message : "Internal server error";

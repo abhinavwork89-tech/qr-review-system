@@ -10,6 +10,7 @@ import {
   normalizeCallCountryCodeStored,
 } from "@/lib/call/call-channel";
 import { normalizeMasterQrType, type MasterQrType } from "@/lib/scan/master-qr";
+import { normalizeAiReviewLanguage } from "@/lib/ai/language";
 
 /** Remove disallowed control chars; keeps tab/newline/carriage return for review copy. */
 const CTRL_DISALLOWED = /[\x00-\x08\x0B\x0C\x0E-\x1F]/g;
@@ -128,6 +129,10 @@ export type BusinessInsertSanitize = {
   call_country_code: string;
   call_number: string | null;
   master_qr_type: MasterQrType;
+  ai_enabled: boolean;
+  ai_review_language: string;
+  ai_daily_limit: number;
+  ai_suggestions_count: number | null;
 };
 
 export function sanitizeBusinessInsertPayload<T extends BusinessInsertSanitize>(row: T): T {
@@ -177,6 +182,18 @@ export function sanitizeBusinessInsertPayload<T extends BusinessInsertSanitize>(
         : null,
     master_qr_type:
       normalizeMasterQrType(row.master_qr_type) ?? (row.master_qr_type as MasterQrType),
+    ai_enabled: row.ai_enabled === true,
+    ai_review_language: normalizeAiReviewLanguage(row.ai_review_language),
+    ai_daily_limit:
+      typeof row.ai_daily_limit === "number" && Number.isInteger(row.ai_daily_limit)
+        ? Math.min(50_000, Math.max(1, row.ai_daily_limit))
+        : 50,
+    ai_suggestions_count:
+      row.ai_suggestions_count === null || row.ai_suggestions_count === undefined
+        ? null
+        : typeof row.ai_suggestions_count === "number" && Number.isInteger(row.ai_suggestions_count)
+          ? Math.min(20, Math.max(1, row.ai_suggestions_count))
+          : null,
   };
 }
 
@@ -296,6 +313,31 @@ export function sanitizeBusinessPatchRecord(
       out.master_qr_type = null;
     } else if (typeof v === "string") {
       out.master_qr_type = normalizeMasterQrType(v.trim());
+    }
+  }
+
+  if ("ai_enabled" in out) {
+    out.ai_enabled = out.ai_enabled === true || out.ai_enabled === "true";
+  }
+  if ("ai_review_language" in out && typeof out.ai_review_language === "string") {
+    out.ai_review_language = normalizeAiReviewLanguage(out.ai_review_language);
+  }
+  if ("ai_daily_limit" in out) {
+    const v = out.ai_daily_limit;
+    if (typeof v === "number" && Number.isInteger(v)) {
+      out.ai_daily_limit = Math.min(50_000, Math.max(1, v));
+    } else if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+      out.ai_daily_limit = Math.min(50_000, Math.max(1, Number.parseInt(v.trim(), 10)));
+    }
+  }
+  if ("ai_suggestions_count" in out) {
+    const v = out.ai_suggestions_count;
+    if (v === null || v === undefined || v === "") {
+      out.ai_suggestions_count = null;
+    } else if (typeof v === "number" && Number.isInteger(v)) {
+      out.ai_suggestions_count = Math.min(20, Math.max(1, v));
+    } else if (typeof v === "string" && /^\d+$/.test(v.trim())) {
+      out.ai_suggestions_count = Math.min(20, Math.max(1, Number.parseInt(v.trim(), 10)));
     }
   }
 

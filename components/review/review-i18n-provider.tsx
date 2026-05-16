@@ -10,6 +10,7 @@ import {
 } from "react";
 import {
   normalizeReviewLocale,
+  readStoredReviewLocale,
   REVIEW_LOCALE_STORAGE_KEY,
   type SupportedReviewLocale,
 } from "@/lib/i18n/review-locale";
@@ -40,35 +41,27 @@ export function ReviewI18nProvider({
     [businessDefaultLocale],
   );
 
-  const [locale, setLocaleState] = useState<SupportedReviewLocale>(businessNorm);
+  const [locale, setLocaleState] = useState<SupportedReviewLocale>(() =>
+    readStoredReviewLocale(businessNorm),
+  );
 
   useLayoutEffect(() => {
+    if (!DEBUG) return;
     let storedRaw: string | null = null;
     try {
       storedRaw = localStorage.getItem(REVIEW_LOCALE_STORAGE_KEY);
     } catch {
       storedRaw = null;
     }
-    let resolved: SupportedReviewLocale = businessNorm;
-    if (storedRaw) {
-      const s = storedRaw.trim().toLowerCase();
-      if (s === "en" || s === "hi" || s === "hindi") {
-        resolved = normalizeReviewLocale(storedRaw);
-        setLocaleState(resolved);
-      }
-    }
-
-    if (DEBUG) {
-      console.warn("[review-i18n]", {
-        slug,
-        namespace: "review",
-        businessRaw: businessDefaultLocale,
-        businessNorm,
-        localStorageRaw: storedRaw,
-        resolvedLocale: resolved,
-      });
-    }
-  }, [businessNorm, businessDefaultLocale, slug]);
+    console.warn("[review-i18n]", {
+      slug,
+      namespace: "review",
+      businessRaw: businessDefaultLocale,
+      businessNorm,
+      localStorageRaw: storedRaw,
+      resolvedLocale: locale,
+    });
+  }, [businessNorm, businessDefaultLocale, slug, locale]);
 
   const setLocale = useCallback((next: SupportedReviewLocale) => {
     setLocaleState(next);
