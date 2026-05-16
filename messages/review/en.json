@@ -1,0 +1,176 @@
+{
+  "header": {
+    "leaveReview": "Leave a review"
+  },
+  "language": {
+    "switchLabel": "Language",
+    "english": "English",
+    "hindi": "हिन्दी"
+  },
+  "promotions": {
+    "aria": "Promotions",
+    "empty": "No promotional banners available"
+  },
+  "channels": {
+    "open": "Open {{channel}}",
+    "callUs": "Call us",
+    "call": "Call",
+    "callAria": "Call the business",
+    "sectionAria": "Connect with the business",
+    "instagram": "Instagram",
+    "whatsapp": "WhatsApp",
+    "facebook": "Facebook",
+    "website": "Website",
+    "x": "X"
+  },
+  "resources": {
+    "sectionAria": "Digital resources",
+    "title": "Digital resources",
+    "subtitle": "Tap to open or download (opens in a new tab).",
+    "open": "Open",
+    "imageAlt": "Image",
+    "broken": "Preview unavailable — you can still open the file."
+  },
+  "rewards": {
+    "sectionAria": "Rewards",
+    "spinUsed": "You've already claimed your spin reward.",
+    "scratchUsed": "You've already claimed your scratch reward.",
+    "spin": "Spin",
+    "scratch": "Scratch",
+    "spinCta": "Spin the wheel",
+    "scratchCta": "Scratch card",
+    "won": "You won: {{prize}}",
+    "close": "Close",
+    "loadingReward": "Preparing your game…",
+    "spinPlaying": "Spinning…",
+    "scratchPlaying": "Scratch to reveal",
+    "scratchHint": "Drag your finger or mouse across the card to reveal your reward.",
+    "tapToReveal": "Tap to reveal your reward",
+    "congratsTitle": "Congratulations!",
+    "congratsBody": "You unlocked {{prize}}.",
+    "betterLuckTitle": "So close!",
+    "betterLuckBody": "Better luck next time — thanks for playing!",
+    "errorTitle": "Couldn’t load reward",
+    "errorGeneric": "Something went wrong. Please try again.",
+    "tryAgain": "Try again"
+  },
+  "delayed": {
+    "title": "Would you like to rate our service?",
+    "yes": "Yes",
+    "no": "No"
+  },
+  "googleReturn": {
+    "yesSuccessTitle": "Thank you — glad you submitted your review!",
+    "yesSuccessBody": "Your feedback helps others discover great businesses.",
+    "openPromptTitle": "You can still submit your review",
+    "openReview": "Open {{label}} review",
+    "reviewLinkBrand": "Google",
+    "noPublicLink": "A public review link isn't available. Thank you for leaving feedback here.",
+    "questionTitle": "Did you submit your review on Google?",
+    "yes": "Yes",
+    "notYet": "Not yet",
+    "no": "No"
+  },
+  "rating": {
+    "yourRating": "Your rating",
+    "tapStars": "Tap a star (1–5).",
+    "chooseRating": "Choose a rating to continue.",
+    "starGroupLabel": "Your star rating",
+    "starSr": "{{n}} star",
+    "starSrPlural": "{{n}} stars",
+    "suggestedWording": "Suggested wording",
+    "suggestedHint": "Tap a card to insert text — you can edit it below.",
+    "yourReview": "Your review",
+    "reviewPlaceholder": "Select a suggestion above or write your own.",
+    "yourDetails": "Your details",
+    "name": "Name",
+    "email": "Email",
+    "mobile": "Mobile",
+    "submit": "Submit review",
+    "submitting": "Submitting…",
+    "clipboardWarning": "We couldn't copy your text automatically. Use the saved review above if you need to paste on Google.",
+    "requiredMark": "(required)",
+    "namePlaceholder": "Your full name",
+    "emailPlaceholder": "you@example.com",
+    "mobilePlaceholder": "Digits only",
+    "googleRedirectHint": "Your review has been copied automatically. After redirecting to Google Review, simply paste it there to complete your rating.",
+    "postSubmitRedirectNote": "You will be redirected to Google Review in a few seconds.",
+    "redirectCountdown": "Redirecting in {{seconds}}s…",
+    "redirectOpenManually": "If you are not redirected, open Google Review here.",
+    "copyToastTitle": "Copied",
+    "copyToastBody": "Review text copied — paste it on Google when prompted.",
+    "aiSuggestedTitle": "AI-powered suggestions",
+    "aiSuggestedHint": "Tap a card to fill your review — you can edit freely below.",
+    "aiPreparing": "Preparing AI suggestions…",
+    "aiGenerating": "Generating AI reviews…",
+    "aiGeneratingSub": "This usually takes just a moment.",
+    "aiInstantBadge": "Quick response",
+    "aiRateLimited": "AI suggestions are temporarily unavailable. You can still write and submit your review manually.",
+    "aiUnavailable": "AI suggestions are not available right now. Please use the suggestions below or write your own.",
+    "aiLoadFailed": "We couldn’t load AI suggestions. You can still pick a template or write your own.",
+    "aiEmptyFallback": "No AI lines were returned. Choose a template or write your own review.",
+    "errIncompleteReview": "Please complete the review details.",
+    "errIncompleteContact": "Please complete your contact details.",
+    "errGeneric": "Something went wrong. Please try again.",
+    "errNetwork": "Network error. Check your connection and try again.",
+    "thanksTitle": "Thank you for your feedback",
+    "thanksBody": "Your review has been saved. It helps the business improve.",
+    "thanksNoLinkBody": "Your review has been saved. An external review link is not configured for this business.",
+    "savedReview": "Saved review",
+    "dash": "—",
+    "starOne": "1 star",
+    "starsMany": "{{n}} stars",
+    "returnAria": "Google review follow-up",
+    "thanksAria": "Thank you"
+  },
+  "validation": {
+    "mobile": {
+      "required": "This field is required",
+      "countryRequired": "Country code is required",
+      "digitsOnly": "Use digits only",
+      "invalidLength": "Enter a valid mobile number"
+    },
+    "contact": {
+      "nameRequired": "Name is required",
+      "nameOnlySpaces": "Enter a real name (not only spaces).",
+      "nameTooShort": "Name is too short (minimum 2 characters).",
+      "nameTooLong": "Name is too long (maximum 200 characters).",
+      "emailRequired": "Email is required",
+      "emailInvalid": "Enter a valid email address",
+      "emailTooLong": "Email is too long"
+    }
+  },
+  "footer": {
+    "poweredBy": "Reviews powered by"
+  },
+  "inactive": {
+    "title": "Service unavailable",
+    "body": "This service is currently unavailable"
+  },
+  "qrInvalid": {
+    "title": "QR invalid",
+    "body": "This link does not match an active review page. Check the code or ask the business for an updated QR."
+  },
+  "loading": {
+    "srOnly": "Loading review page…"
+  },
+  "review": {
+    "suggestions": {
+      "5": [
+        "Amazing experience overall. Everything was smooth and professional.",
+        "Really happy with the service. Highly recommended!",
+        "Great experience, will definitely come again."
+      ],
+      "3": [
+        "Good experience overall. Service was satisfactory.",
+        "Decent service, could be slightly improved.",
+        "Nice experience, staff was helpful."
+      ],
+      "1": [
+        "Service needs improvement. Not fully satisfied.",
+        "Average experience, expected better.",
+        "There were some issues during my visit."
+      ]
+    }
+  }
+}

@@ -29,9 +29,11 @@ const MENU = [
 export function AdminSidebar({
   open,
   onClose,
+  desktopCollapsed,
 }: {
   open: boolean;
   onClose: () => void;
+  desktopCollapsed?: boolean;
 }) {
   const pathname = usePathname();
 
@@ -49,7 +51,7 @@ export function AdminSidebar({
           open
             ? "translate-x-0"
             : "-translate-x-full pointer-events-none md:pointer-events-auto"
-        }`}
+        } ${desktopCollapsed ? "md:hidden" : "md:flex"}`}
       >
         <div className="border-b border-zinc-100 px-5 py-6 dark:border-zinc-800/80">
           <p className="text-xs font-medium uppercase tracking-wider text-zinc-500 dark:text-zinc-400">

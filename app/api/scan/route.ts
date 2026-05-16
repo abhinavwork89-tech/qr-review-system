@@ -3,6 +3,9 @@ import { createServiceRoleClient } from "@/lib/supabase/server";
 import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
 import { hasRecentScanLog } from "@/lib/scan/scan-log-dedupe";
 import { normalizeScanQrTypeParam, type ScanQrType } from "@/lib/scan/qr-types";
+import { enforcePublicRateLimits } from "@/lib/security/enforce-public-rate-limit";
+import { createRouteLogger } from "@/lib/logging/app-logger";
+import { rejectOversizedBody } from "@/lib/security/request-body-limit";
 
 const UUID_RE =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -78,7 +81,16 @@ function parseScanBody(input: unknown):
 }
 
 export async function POST(request: Request) {
+  const log = createRouteLogger("scan", "/api/scan", request.headers);
   try {
+    const tooLarge = rejectOversizedBody(request, 4096);
+    if (tooLarge) return tooLarge;
+
+    const limited = enforcePublicRateLimits(request.headers, [
+      { prefix: "scan:post:ip", max: 120, windowMs: 60_000 },
+    ]);
+    if (limited) return limited;
+
     let json: unknown;
     try {
       json = await request.json();
@@ -139,18 +151,16 @@ export async function POST(request: Request) {
       .single();
 
     if (error) {
-      console.error("SUPABASE SCAN LOG INSERT:", error.message, error);
-      return NextResponse.json(
-        { error: error.message, ...(error.code ? { code: error.code } : {}) },
-        { status: error.code === "23503" ? 400 : 500 },
-      );
+      log.error("insert_failed", { code: error.code ?? null });
+      if (error.code === "23503") {
+        return NextResponse.json({ error: "Invalid business" }, { status: 400 });
+      }
+      return NextResponse.json({ error: "Server error" }, { status: 500 });
     }
 
     return NextResponse.json({ ok: true, id: data.id }, { status: 201 });
   } catch (error) {
-    console.error("POST /api/scan ERROR:", error);
-    const message =
-      error instanceof Error ? error.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    log.error("unhandled", {}, error);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }

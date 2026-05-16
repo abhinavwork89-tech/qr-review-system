@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { clientDevError } from "@/lib/logging/client-dev-log";
 
 export function ScanTracker({ businessId }: { businessId: string }) {
   const sentRef = useRef(false);
@@ -24,7 +25,7 @@ export function ScanTracker({ businessId }: { businessId: string }) {
         referrer,
       }),
     }).catch((error) => {
-      console.error("SCAN TRACKING ERROR:", error);
+      clientDevError("[scan-tracker]", error);
     });
   }, [businessId]);
 

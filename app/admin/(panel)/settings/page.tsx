@@ -1,13 +1,16 @@
+import { AiGlobalSettingsSection } from "@/components/admin/settings/ai-global-settings-section";
 import { BrandingSettingsSection } from "@/components/admin/settings/branding-settings-section";
 import { BusinessTypesManager } from "@/components/admin/settings/business-types-manager";
 import { getAppSettingsPublic } from "@/lib/data/app-settings";
+import { getGlobalAISettings } from "@/lib/ai/global-settings";
 import { listBusinessTypesWithUsage } from "@/lib/data/business-types-admin";
 
 export const dynamic = "force-dynamic";
 
 export default async function AdminSettingsPage() {
-  const [settings, { types, error: businessTypesError }] = await Promise.all([
+  const [settings, aiSettings, { types, error: businessTypesError }] = await Promise.all([
     getAppSettingsPublic(),
+    getGlobalAISettings(),
     listBusinessTypesWithUsage(),
   ]);
 
@@ -23,6 +26,7 @@ export default async function AdminSettingsPage() {
       </div>
 
       <BrandingSettingsSection initial={settings} />
+      <AiGlobalSettingsSection initial={aiSettings} />
       <BusinessTypesManager initialTypes={types} loadError={businessTypesError} />
     </div>
   );

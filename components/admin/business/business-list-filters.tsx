@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { Loader2 } from "lucide-react";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
 
 type Props = {
@@ -13,6 +14,7 @@ export function BusinessListFilters({ businessTypeOptions }: Props) {
   const pathname = usePathname();
   const searchParams = useSearchParams();
   const [open, setOpen] = useState(false);
+  const [isFilterNavPending, startFilterNav] = useTransition();
 
   const defaults = useMemo(
     () => ({
@@ -38,7 +40,9 @@ export function BusinessListFilters({ businessTypeOptions }: Props) {
 
     params.set("page", "1");
     setOpen(false);
-    router.push(`${pathname}?${params.toString()}`);
+    startFilterNav(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
   };
 
   const clearFilters = () => {
@@ -48,13 +52,23 @@ export function BusinessListFilters({ businessTypeOptions }: Props) {
     params.delete("businessType");
     params.set("page", "1");
     setOpen(false);
-    router.push(`${pathname}?${params.toString()}`);
+    startFilterNav(() => {
+      router.push(`${pathname}?${params.toString()}`);
+    });
   };
 
   return (
     <div className="flex items-center gap-2">
-      <button type="button" className={adminPanel.btnSecondary} onClick={() => setOpen((s) => !s)}>
-        Filters
+      <button
+        type="button"
+        className={adminPanel.btnSecondary}
+        disabled={isFilterNavPending}
+        onClick={() => setOpen((s) => !s)}
+      >
+        <span className="inline-flex items-center gap-2">
+          Filters
+          {isFilterNavPending ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden /> : null}
+        </span>
       </button>
       {open ? (
         <div className="absolute right-0 top-12 z-20 w-80 rounded-xl border border-zinc-200 bg-white p-4 shadow-lg dark:border-zinc-700 dark:bg-zinc-900">

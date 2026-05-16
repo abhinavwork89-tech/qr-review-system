@@ -60,7 +60,6 @@ function BannerSlideImage({
         className="object-cover"
         sizes="100vw"
         priority={priority}
-        unoptimized
         onError={() => setFailed(true)}
       />
     </div>
@@ -81,6 +80,7 @@ export function BannerSlider({
   const blockNextClick = useRef(false);
 
   const count = banners.length;
+  const activeIndex = count > 0 ? Math.min(index, count - 1) : 0;
 
   useEffect(() => {
     const mq = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -103,10 +103,6 @@ export function BannerSlider({
     const t = window.setInterval(() => go(1), intervalMs);
     return () => window.clearInterval(t);
   }, [count, go, intervalMs, reducedMotion]);
-
-  useEffect(() => {
-    setIndex((i) => Math.min(i, Math.max(0, count - 1)));
-  }, [count]);
 
   if (count === 0) {
     return null;
@@ -175,13 +171,13 @@ export function BannerSlider({
       >
         <div
           className="flex w-full motion-safe:transition-transform motion-safe:duration-500 motion-safe:ease-out motion-reduce:transition-none"
-          style={{ transform: `translate3d(-${index * 100}%,0,0)` }}
+          style={{ transform: `translate3d(-${activeIndex * 100}%,0,0)` }}
         >
           {banners.map((b, i) => (
             <div
               key={`${id}-${i}-${b.href}`}
               className="min-w-full shrink-0"
-              aria-hidden={i !== index}
+              aria-hidden={i !== activeIndex}
             >
               <a
                 href={b.href}
@@ -212,10 +208,10 @@ export function BannerSlider({
               key={`${id}-dot-${i}`}
               type="button"
               role="tab"
-              aria-selected={i === index}
+              aria-selected={i === activeIndex}
               aria-label={`Go to slide ${i + 1}`}
               className={`h-1.5 rounded-full transition-[width,background-color] duration-300 ${
-                i === index
+                i === activeIndex
                   ? "w-6 bg-zinc-800 dark:bg-zinc-200"
                   : "w-1.5 bg-zinc-300 hover:bg-zinc-400 dark:bg-zinc-600 dark:hover:bg-zinc-500"
               }`}

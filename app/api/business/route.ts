@@ -2,12 +2,48 @@ import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
 import { scheduleWelcomeEmailAfterCreate } from "@/lib/email/lifecycle-triggers";
+import {
+  finalizeIdentityForDb,
+  getIdentityFieldErrors,
+  parseIdentityTypeInput,
+} from "@/lib/business/identity";
+import { sanitizeBusinessInsertPayload } from "@/lib/security/input-sanitize";
+import { normalizeDialCode } from "@/lib/phone/mobile";
+import {
+  clampWhatsAppLocalInput,
+  finalizeWhatsAppForPersist,
+  validateWhatsAppLocalForDial,
+} from "@/lib/whatsapp/wa-me";
+import { finalizeCallForPersist, getCallFormErrors } from "@/lib/call/call-channel";
+import {
+  computeDefaultMasterQrType,
+  normalizeMasterQrType,
+  validateMasterQrForPersist,
+  type MasterQrType,
+} from "@/lib/scan/master-qr";
+import { normalizeAiReviewLanguage } from "@/lib/ai/language";
+import { requireAdminSession } from "@/lib/require-admin-session";
 
 const SLUG_SUFFIX_LEN = 4;
 const SLUG_ALPHABET = "abcdefghijklmnopqrstuvwxyz0123456789";
 
+function isValidMobile(value: string): boolean {
+  const compact = value.replace(/\s+/g, "");
+  return /^\+\d{8,15}$/.test(compact);
+}
+
+function readBool(v: unknown, defaultValue: boolean): boolean {
+  if (typeof v === "boolean") return v;
+  if (v === "true") return true;
+  if (v === "false") return false;
+  return defaultValue;
+}
+
 export async function POST(request: Request) {
   try {
+    const deny = await requireAdminSession();
+    if (deny) return deny;
+
     let json: unknown;
     try {
       json = await request.json();
@@ -24,7 +60,7 @@ export async function POST(request: Request) {
       );
     }
 
-    const row = parsed.data;
+    const row = sanitizeBusinessInsertPayload(parsed.data);
 
     const maxAttempts = 8;
     let lastError: { message: string; code?: string } | null = null;
@@ -55,6 +91,20 @@ export async function POST(request: Request) {
           resource_urls: row.resource_urls,
           status: row.status,
           is_active: isBusinessActiveStatus(row.status),
+          identity_type: row.identity_type,
+          identity_number: row.identity_number,
+          identity_proof_urls: row.identity_proof_urls,
+          client_photo_url: row.client_photo_url,
+          whatsapp_country_code: row.whatsapp_country_code,
+          whatsapp_number: row.whatsapp_number,
+          call_enabled: row.call_enabled,
+          call_country_code: row.call_country_code,
+          call_number: row.call_number,
+          master_qr_type: row.master_qr_type,
+          ai_enabled: row.ai_enabled,
+          ai_review_language: row.ai_review_language,
+          ai_daily_limit: row.ai_daily_limit,
+          ai_suggestions_count: row.ai_suggestions_count,
         })
         .select("id")
         .single();
@@ -68,7 +118,14 @@ export async function POST(request: Request) {
           email: row.email,
           logoUrl: row.logo_url,
           primaryColor: row.primary_color,
-          resourceUrls: row.resource_urls,
+          google_url: (row.google_url ?? "").trim() || null,
+          channels: row.channels,
+          whatsapp_country_code: row.whatsapp_country_code,
+          whatsapp_number: row.whatsapp_number,
+          master_qr_type:
+            row.master_qr_type != null && typeof row.master_qr_type === "string"
+              ? row.master_qr_type
+              : null,
         });
         return NextResponse.json(
           { ok: true, slug, id: data.id },
@@ -84,28 +141,20 @@ export async function POST(request: Request) {
         continue;
       }
 
+      console.error("[business/create]", error?.message, error?.code ?? "");
       const status =
         error?.code === "23503" || error?.code === "23514" ? 400 : 500;
       return NextResponse.json(
-        {
-          error: error?.message ?? "Database error",
-          ...(error?.code ? { code: error.code } : {}),
-        },
+        { error: status === 400 ? "Invalid business data" : "Server error" },
         { status },
       );
     }
 
-    return NextResponse.json(
-      {
-        error: lastError?.message ?? "Could not allocate a unique slug",
-        ...(lastError?.code ? { code: lastError.code } : {}),
-      },
-      { status: 409 },
-    );
+    console.error("[business/create] slug", lastError?.message);
+    return NextResponse.json({ error: "Could not allocate a unique slug" }, { status: 409 });
   } catch (err) {
-    const message =
-      err instanceof Error ? err.message : "Internal server error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    console.error("[business/create]", err instanceof Error ? err.message : err);
+    return NextResponse.json({ error: "Server error" }, { status: 500 });
   }
 }
 
@@ -128,6 +177,20 @@ type BusinessInsertPayload = {
   banner_urls: string[];
   resource_urls: string[];
   status: "active" | "inactive" | "deleted";
+  identity_type: string | null;
+  identity_number: string | null;
+  identity_proof_urls: string[];
+  client_photo_url: string | null;
+  whatsapp_country_code: string | null;
+  whatsapp_number: string | null;
+  call_enabled: boolean;
+  call_country_code: string;
+  call_number: string | null;
+  master_qr_type: MasterQrType;
+  ai_enabled: boolean;
+  ai_review_language: string;
+  ai_daily_limit: number;
+  ai_suggestions_count: number | null;
 };
 
 type ParseOk = { ok: true; data: BusinessInsertPayload };
@@ -172,6 +235,7 @@ async function parseBusinessBody(
   else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email))
     fields.email = "Invalid email";
   if (!mobile) fields.mobile = "Required";
+  else if (!isValidMobile(mobile)) fields.mobile = "Invalid mobile";
   if (!brand_name) fields.brand_name = "Required";
   if (!primary_color) fields.primary_color = "Required";
   if (!secondary_color) fields.secondary_color = "Required";
@@ -191,8 +255,8 @@ async function parseBusinessBody(
     fields.threshold = "Must be an integer";
     threshold = 0;
   }
-  if (!fields.threshold && threshold !== 3 && threshold !== 4) {
-    fields.threshold = "Must be 3 or 4";
+  if (!fields.threshold && (threshold < 1 || threshold > 5)) {
+    fields.threshold = "Must be from 1 to 5";
   }
 
   const allow = o.allow_low_rating_redirect;
@@ -224,6 +288,114 @@ async function parseBusinessBody(
     fields.channels = "Must be an object";
   }
 
+  const waCcSource =
+    typeof o.whatsapp_country_code === "string"
+      ? o.whatsapp_country_code
+      : typeof o.whatsappCountryCode === "string"
+        ? o.whatsappCountryCode
+        : "";
+  const waNumSource =
+    typeof o.whatsapp_number === "string"
+      ? o.whatsapp_number
+      : typeof o.whatsappNumber === "string"
+        ? o.whatsappNumber
+        : "";
+  const whatsappSub =
+    channels && typeof channels.whatsapp === "object" && !Array.isArray(channels.whatsapp)
+      ? (channels.whatsapp as Record<string, unknown>)
+      : null;
+  const waEnabled = whatsappSub?.enabled === true;
+  if (waEnabled) {
+    const numDigits = clampWhatsAppLocalInput(waNumSource);
+    const cc = normalizeDialCode(waCcSource || "+91");
+    const waErr = validateWhatsAppLocalForDial(cc, numDigits);
+    if (waErr) fields.whatsapp_number = waErr;
+  }
+
+  const waPack = finalizeWhatsAppForPersist(
+    channels,
+    waCcSource || "+91",
+    waNumSource,
+  );
+
+  const callCcSource =
+    typeof o.call_country_code === "string"
+      ? o.call_country_code
+      : typeof o.callCountryCode === "string"
+        ? o.callCountryCode
+        : "";
+  const callNumSource =
+    typeof o.call_number === "string"
+      ? o.call_number
+      : typeof o.callNumber === "string"
+        ? o.callNumber
+        : "";
+  const callEnabled = readBool(o.call_enabled ?? o.callEnabled, false);
+  const callDialForValidate = normalizeDialCode(callCcSource || "+91");
+  const callErr = getCallFormErrors({
+    enabled: callEnabled,
+    countryDialRaw: callDialForValidate,
+    localRaw: callNumSource,
+  });
+  if (callErr.callCountryCode) fields.call_country_code = callErr.callCountryCode;
+  if (callErr.callNumber) fields.call_number = callErr.callNumber;
+
+  const callFin = finalizeCallForPersist(callEnabled, callDialForValidate, callNumSource);
+
+  const masterRaw =
+    typeof o.master_qr_type === "string"
+      ? o.master_qr_type
+      : typeof o.masterQrType === "string"
+        ? o.masterQrType
+        : "";
+  const masterTypeResolved =
+    normalizeMasterQrType(masterRaw) ??
+    computeDefaultMasterQrType({
+      google_url: google_url || null,
+      channels: waPack.channels,
+      whatsapp_country_code: waPack.whatsapp_country_code,
+      whatsapp_number: waPack.whatsapp_number,
+    });
+  const masterValErr = validateMasterQrForPersist({
+    master_qr_type: masterTypeResolved,
+    google_url: google_url || null,
+    channels: waPack.channels,
+    whatsapp_country_code: waPack.whatsapp_country_code,
+    whatsapp_number: waPack.whatsapp_number,
+  });
+  if (masterValErr) {
+    fields.master_qr_type = masterValErr;
+  }
+
+  const ai_enabled = readBool(o.ai_enabled ?? o.aiEnabled, false);
+  const ai_review_language = normalizeAiReviewLanguage(o.ai_review_language ?? o.aiReviewLanguage);
+  const aiDailyRaw = o.ai_daily_limit ?? o.aiDailyLimit;
+  let ai_daily_limit = 50;
+  if (aiDailyRaw !== undefined && aiDailyRaw !== null && String(aiDailyRaw).trim() !== "") {
+    const n =
+      typeof aiDailyRaw === "number" && Number.isInteger(aiDailyRaw)
+        ? aiDailyRaw
+        : Number.parseInt(String(aiDailyRaw).trim(), 10);
+    if (!Number.isInteger(n) || n < 1 || n > 50_000) {
+      fields.ai_daily_limit = "Must be an integer from 1 to 50000";
+    } else {
+      ai_daily_limit = n;
+    }
+  }
+  const aiSugRaw = o.ai_suggestions_count ?? o.aiSuggestionsCount;
+  let ai_suggestions_count: number | null = null;
+  if (aiSugRaw !== undefined && aiSugRaw !== null && String(aiSugRaw).trim() !== "") {
+    const n =
+      typeof aiSugRaw === "number" && Number.isInteger(aiSugRaw)
+        ? aiSugRaw
+        : Number.parseInt(String(aiSugRaw).trim(), 10);
+    if (!Number.isInteger(n) || n < 1 || n > 20) {
+      fields.ai_suggestions_count = "Must be 1–20 or omitted for plan default";
+    } else {
+      ai_suggestions_count = n;
+    }
+  }
+
   const logo_url = readOptionalUrl(o.logo_url);
   if (logo_url === "__invalid__") {
     fields.logo_url = "Must be a valid URL";
@@ -237,6 +409,36 @@ async function parseBusinessBody(
   const resource_urls = readOptionalUrlArray(o.resource_urls);
   if (resource_urls === null) {
     fields.resource_urls = "Must be an array of valid URLs";
+  }
+
+  const identityTypeRaw =
+    typeof o.identity_type === "string"
+      ? o.identity_type.trim()
+      : typeof o.identityType === "string"
+        ? o.identityType.trim()
+        : "";
+  const identityNumberSrc =
+    typeof o.identity_number === "string"
+      ? o.identity_number.trim()
+      : typeof o.identityNumber === "string"
+        ? o.identityNumber.trim()
+        : "";
+  const identityTypeForErr = parseIdentityTypeInput(identityTypeRaw) || null;
+  Object.assign(fields, getIdentityFieldErrors(identityTypeForErr, identityNumberSrc));
+
+  const identityProofUrlsParsed = readOptionalUrlArray(o.identity_proof_urls);
+  if (identityProofUrlsParsed === null) {
+    fields.identity_proof_urls = "Must be an array of valid URLs";
+  } else if (identityProofUrlsParsed.length < 1) {
+    fields.identity_proof_urls = "Upload at least one identity proof photo.";
+  }
+
+  const clientPhotoSrc = o.client_photo_url ?? o.clientPhotoUrl;
+  const clientPhotoParsed = readOptionalUrl(clientPhotoSrc);
+  if (clientPhotoParsed === "__invalid__") {
+    fields.client_photo_url = "Must be a valid URL";
+  } else if (clientPhotoParsed === null || !clientPhotoParsed) {
+    fields.client_photo_url = "Client profile photo is required.";
   }
 
   if (Object.keys(fields).length > 0) {
@@ -268,6 +470,8 @@ async function parseBusinessBody(
     };
   }
 
+  const identityFinal = finalizeIdentityForDb(identityTypeRaw, identityNumberSrc);
+
   return {
     ok: true,
     data: {
@@ -284,7 +488,12 @@ async function parseBusinessBody(
       threshold,
       direct_redirect,
       allow_low_rating_redirect,
-      channels,
+      channels: waPack.channels,
+      whatsapp_country_code: waPack.whatsapp_country_code,
+      whatsapp_number: waPack.whatsapp_number,
+      call_enabled: callFin.call_enabled,
+      call_country_code: callFin.call_country_code,
+      call_number: callFin.call_number,
       logo_url: logo_url === "__invalid__" ? null : logo_url,
       banner_urls: banner_urls ?? [],
       resource_urls: resource_urls ?? [],
@@ -292,6 +501,18 @@ async function parseBusinessBody(
         status: o.status,
         is_active: o.is_active,
       }),
+      identity_type: identityFinal.identity_type,
+      identity_number: identityFinal.identity_number,
+      identity_proof_urls: identityProofUrlsParsed ?? [],
+      client_photo_url:
+        clientPhotoParsed === "__invalid__" || clientPhotoParsed === null
+          ? null
+          : clientPhotoParsed,
+      master_qr_type: masterTypeResolved,
+      ai_enabled,
+      ai_review_language,
+      ai_daily_limit,
+      ai_suggestions_count,
     },
   };
 }

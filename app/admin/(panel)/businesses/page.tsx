@@ -1,8 +1,10 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { normalizeBusinessStatus, type BusinessStatus } from "@/lib/business/status";
-import { DeleteBusinessButton } from "@/components/admin/business/delete-business-button";
 import { BusinessListFilters } from "@/components/admin/business/business-list-filters";
+import { BusinessListSearch } from "@/components/admin/business/business-list-search";
+import { BusinessTableRowActions } from "@/components/admin/business/business-table-row-actions";
 import { BusinessStatusToggleButton } from "@/components/admin/business/business-status-toggle-button";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
 import {
@@ -55,6 +57,12 @@ export default async function BusinessListPage({
     deletedFlag === "true" ||
     (Array.isArray(deletedFlag) && deletedFlag.includes("1"));
 
+  const qRaw = query.q;
+  const qParam = Array.isArray(qRaw) ? qRaw[0] : qRaw;
+  const searchQueryRaw = typeof qParam === "string" ? qParam : "";
+  const searchPattern = buildSearchIlikePattern(searchQueryRaw);
+  const hasActiveSearch = Boolean(searchPattern);
+
   const supabase = createServiceRoleClient();
   const businessTypesInUsePromise = supabase
     .from("businesses")
@@ -79,6 +87,9 @@ export default async function BusinessListPage({
     listQuery = listQuery.or("status.eq.active,and(status.is.null,is_active.eq.true)");
   } else if (statusFilter === "inactive") {
     listQuery = listQuery.or("status.eq.inactive,and(status.is.null,is_active.eq.false)");
+  }
+  if (searchPattern) {
+    listQuery = listQuery.or(`name.ilike.${searchPattern},mobile.ilike.${searchPattern}`);
   }
   listQuery = listQuery.range(from, to);
 
@@ -140,14 +151,16 @@ export default async function BusinessListPage({
           </div>
         ) : null}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-          <label className="relative w-full sm:max-w-xs">
-            <span className="sr-only">Search businesses</span>
-            <input
-              type="search"
-              placeholder="Search businesses..."
-              className="w-full rounded-xl border border-zinc-200 bg-zinc-50/60 px-3.5 py-2.5 text-sm text-zinc-900 outline-none transition placeholder:text-zinc-400 focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-indigo-600 dark:focus:ring-indigo-400/25"
-            />
-          </label>
+          <Suspense
+            fallback={
+              <div
+                className="h-10 w-full max-w-xs animate-pulse rounded-xl bg-zinc-200/80 dark:bg-zinc-800/80"
+                aria-hidden
+              />
+            }
+          >
+            <BusinessListSearch />
+          </Suspense>
           <div className="flex items-center gap-2">
             <div className="text-xs text-zinc-500 dark:text-zinc-400">
               {`Showing ${filteredRows.length} of ${totalItems} businesses`}
@@ -166,8 +179,13 @@ export default async function BusinessListPage({
             Failed to fetch businesses: {error.message}
           </div>
         ) : filteredRows.length === 0 ? (
-          <div className="flex min-h-40 items-center justify-center rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 text-sm font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-zinc-400">
-            No businesses found
+          <div className="flex min-h-40 flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-zinc-300 bg-zinc-50/60 px-4 text-center text-sm font-medium text-zinc-500 dark:border-zinc-700 dark:bg-zinc-950/40 dark:text-zinc-400">
+            <p>{hasActiveSearch ? "No businesses match your search." : "No businesses found."}</p>
+            {hasActiveSearch ? (
+              <p className="max-w-md text-xs font-normal text-zinc-400 dark:text-zinc-500">
+                Try another spelling, a shorter mobile fragment, or clear the search / filters.
+              </p>
+            ) : null}
           </div>
         ) : (
           <>
@@ -248,15 +266,9 @@ export default async function BusinessListPage({
                           )}
                         </td>
                         <td className="px-4 py-3">
-                          <div className="flex items-center gap-2">
+                          <div className="flex flex-wrap items-center gap-2">
                             <BusinessStatusToggleButton businessId={row.id} status={row.status} />
-                            <Link href={`/admin/business/${row.id}`} className={adminPanel.btnSecondary}>
-                              View
-                            </Link>
-                            <Link href={`/admin/business/${row.id}?mode=edit`} className={adminPanel.btnSecondary}>
-                              Edit
-                            </Link>
-                            <DeleteBusinessButton businessId={row.id} />
+                            <BusinessTableRowActions businessId={row.id} />
                           </div>
                         </td>
                       </tr>
@@ -304,6 +316,21 @@ export default async function BusinessListPage({
 
 function asStringOrNull(v: unknown): string | null {
   return typeof v === "string" ? v : null;
+}
+
+/** Trim, collapse spaces, strip characters that break PostgREST `or()` / ILIKE filters. */
+function sanitizeSearchForIlike(raw: string): string {
+  return raw
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[%,()'"]/g, " ")
+    .trim();
+}
+
+function buildSearchIlikePattern(raw: string): string | null {
+  const safe = sanitizeSearchForIlike(raw);
+  if (!safe) return null;
+  return `%${safe}%`;
 }
 
 function formatPlan(plan: string | null): string {

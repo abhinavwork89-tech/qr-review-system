@@ -24,7 +24,13 @@ export function StatsCard({
           <p className="mt-2 text-2xl font-semibold tracking-tight text-zinc-900 dark:text-zinc-50">
             {value}
           </p>
-          <p className="mt-2 text-xs font-medium text-emerald-600 dark:text-emerald-400">
+          <p
+            className={`mt-2 text-xs font-medium ${
+              growth === "—" || growthCaption
+                ? "text-zinc-500 dark:text-zinc-400"
+                : "text-emerald-600 dark:text-emerald-400"
+            }`}
+          >
             {growthCaption ?? `${growth} vs last month`}
           </p>
         </div>

@@ -1,6 +1,11 @@
 import { isSafeHttpUrl } from "@/lib/review/business-config";
 import type { BusinessChannels } from "@/lib/types/business";
 import type { ScanQrType } from "@/lib/scan/qr-types";
+import { resolveWhatsAppHttpsUrl } from "@/lib/whatsapp/wa-me";
+import {
+  resolveMasterOutboundUrl,
+  masterScanDestinationsMatch,
+} from "@/lib/scan/master-qr";
 
 function trimUrl(value: string): string {
   return value.trim();
@@ -69,6 +74,24 @@ function readChannels(raw: unknown): BusinessChannels | null {
   return base;
 }
 
+function readWhatsappRawFromChannels(raw: unknown): {
+  enabled: boolean;
+  legacyUrl: string;
+} {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return { enabled: false, legacyUrl: "" };
+  }
+  const wa = (raw as Record<string, unknown>).whatsapp;
+  if (!wa || typeof wa !== "object" || Array.isArray(wa)) {
+    return { enabled: false, legacyUrl: "" };
+  }
+  const link = wa as Record<string, unknown>;
+  return {
+    enabled: link.enabled === true,
+    legacyUrl: typeof link.url === "string" ? link.url.trim() : "",
+  };
+}
+
 function readResourceUrls(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   const out: string[] = [];
@@ -84,6 +107,10 @@ export type BusinessScanRow = {
   google_url: string | null;
   channels: unknown;
   resource_urls: unknown;
+  whatsapp_country_code?: string | null;
+  whatsapp_number?: string | null;
+  slug?: string | null;
+  master_qr_type?: string | null;
 };
 
 /**
@@ -94,13 +121,45 @@ export function isScanDestinationAllowed(
   row: BusinessScanRow,
   qrType: ScanQrType,
   candidateUrl: string,
+  /** Required when `qrType === "master"` (public review page URL for fallback matching). */
+  reviewPageAbsoluteUrl?: string,
 ): boolean {
   const dest = trimUrl(candidateUrl);
   if (!dest || !isSafeHttpUrl(dest)) return false;
 
+  if (qrType === "master") {
+    const review = (reviewPageAbsoluteUrl ?? "").trim();
+    if (!review || !isSafeHttpUrl(review)) return false;
+    const expected = resolveMasterOutboundUrl(
+      {
+        master_qr_type: row.master_qr_type,
+        google_url: row.google_url,
+        channels: row.channels,
+        whatsapp_country_code: row.whatsapp_country_code,
+        whatsapp_number: row.whatsapp_number,
+      },
+      review,
+    );
+    if (!expected || !isSafeHttpUrl(expected)) return false;
+    return masterScanDestinationsMatch(expected, dest);
+  }
+
   if (qrType === "google") {
     const g = row.google_url?.trim() ?? "";
     return g.length > 0 && isSafeHttpUrl(g) && urlsEquivalent(g, dest);
+  }
+
+  if (qrType === "whatsapp") {
+    const rawWa = readWhatsappRawFromChannels(row.channels);
+    const expected = resolveWhatsAppHttpsUrl({
+      countryCode:
+        typeof row.whatsapp_country_code === "string" ? row.whatsapp_country_code : null,
+      localNumber: typeof row.whatsapp_number === "string" ? row.whatsapp_number : null,
+      legacyChannelUrl: rawWa.legacyUrl,
+      channelEnabled: rawWa.enabled,
+    });
+    if (!expected || !isSafeHttpUrl(expected)) return false;
+    return urlsEquivalent(expected, dest);
   }
 
   const channels = readChannels(row.channels);
@@ -111,7 +170,7 @@ export function isScanDestinationAllowed(
   const pick = (
     key: keyof Pick<
       BusinessChannels,
-      "instagram" | "facebook" | "whatsapp" | "website" | "x"
+      "instagram" | "facebook" | "website" | "x"
     >,
   ): boolean => {
     const ch = channels[key];
@@ -128,8 +187,6 @@ export function isScanDestinationAllowed(
       return pick("instagram");
     case "facebook":
       return pick("facebook");
-    case "whatsapp":
-      return pick("whatsapp");
     case "website":
       return pick("website");
     case "x":

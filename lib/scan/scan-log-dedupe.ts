@@ -1,4 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { createAppLogger } from "@/lib/logging/app-logger";
 
 /** Skip logging when the same business + QR type was recorded moments ago (refresh / double-tap). */
 const DEDUPE_WINDOW_MS = 60_000;
@@ -18,7 +19,10 @@ export async function hasRecentScanLog(
     .limit(1);
 
   if (error) {
-    console.warn("[scan_logs] dedupe check failed", error.message);
+    createAppLogger({ domain: "scan", route: "scan-log-dedupe" }).warn(
+      "dedupe_check_failed",
+      {},
+    );
     return false;
   }
   return (data?.length ?? 0) > 0;

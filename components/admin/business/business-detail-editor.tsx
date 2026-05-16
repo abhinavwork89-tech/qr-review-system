@@ -2,24 +2,85 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
 import { FileUploadField } from "@/components/admin/add-business/file-upload-field";
 import { FormField } from "@/components/admin/add-business/form-field";
 import { FormSection } from "@/components/admin/add-business/form-section";
 import { FormToggle } from "@/components/admin/add-business/form-toggle";
-import { formInputBase, formInputError } from "@/components/admin/add-business/form-styles";
+import { formInputBase, formInputError, formSelectBase } from "@/components/admin/add-business/form-styles";
 import { BrandedQrTile } from "@/components/admin/business/branded-qr-tile";
 import { BusinessStatusToggleButton } from "@/components/admin/business/business-status-toggle-button";
 import {
   sanitizeMobileInput,
   validateAndMergeFiles,
+  BUSINESS_IMAGE_ACCEPT,
 } from "@/components/admin/add-business/upload-utils";
+import { ExistingMediaGrid } from "@/components/admin/media/existing-media-grid";
+import { deleteMediaUrls } from "@/lib/storage/delete-media-client";
+import {
+  dedupeMediaUrls,
+  diffRemovedMediaUrls,
+  normalizeStorageSlug,
+} from "@/lib/storage/media-storage";
+import {
+  COUNTRY_DIAL_CODES,
+  joinDialAndLocal,
+  sanitizePhoneLocalInput,
+  splitPhoneNumber,
+  validateInternationalPhone,
+  normalizeDialCode,
+  DEFAULT_DIAL_CODE,
+} from "@/lib/phone/mobile";
+import { sanitizeBusinessPatchRecord } from "@/lib/security/input-sanitize";
+import {
+  finalizeIdentityForDb,
+  formatIdentityNumberInput,
+  getIdentityDocumentErrors,
+  getIdentityFieldErrors,
+  getIdentityNumberMaxLength,
+  identityTypeLabel,
+  isAllowedIdentityTypeSlug,
+  parseIdentityTypeInput,
+} from "@/lib/business/identity";
 import { validateBrandHexColor } from "@/lib/admin/brand-color-validation";
 import { resolveBusinessTypeDisplayName } from "@/lib/admin/business-type-display";
 import { isSafeHttpUrl } from "@/lib/review/business-config";
 import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
 import { adminQrLabelToScanType } from "@/lib/scan/qr-types";
+import {
+  computeDefaultMasterQrType,
+  formatMasterQrTypeLabel,
+  normalizeMasterQrType,
+  resolveMasterOutboundUrl,
+  validateMasterQrForPersist,
+  type MasterQrType,
+} from "@/lib/scan/master-qr";
+import {
+  buildWhatsAppWaMeUrl,
+  getWhatsAppFormErrors,
+  clampWhatsAppLocalInput,
+  resolveWhatsAppHttpsUrl,
+} from "@/lib/whatsapp/wa-me";
+import {
+  WhatsAppChannelFields,
+  WhatsAppChannelReadOnly,
+} from "@/components/admin/add-business/whatsapp-channel-fields";
+import {
+  CallChannelFields,
+  CallChannelReadOnly,
+  callChannelFieldLabelsEn,
+  callChannelReadOnlyLabelsEn,
+} from "@/components/admin/add-business/call-channel-fields";
+import {
+  CALL_FORM_ERRORS_EN,
+  getCallFormErrors,
+  clampCallLocalInput,
+  finalizeCallForPersist,
+  buildCallTelHref,
+} from "@/lib/call/call-channel";
+import { defaultSuggestionsForPlan } from "@/lib/ai/suggestions-by-plan";
+import { adminAiLabels } from "@/lib/i18n/admin-ai-labels";
 
 type Channel = {
   enabled: boolean;
@@ -56,6 +117,21 @@ type DetailValues = {
     website: Channel;
     x: Channel;
   };
+  identityType: string;
+  identityNumber: string;
+  identityProofUrls: string[];
+  clientPhotoUrl: string;
+  whatsappCountryCode: string;
+  whatsappNumber: string;
+  callEnabled: boolean;
+  callCountryCode: string;
+  callNumber: string;
+  masterQrType: MasterQrType;
+  aiEnabled: boolean;
+  aiReviewLanguage: "en" | "hi" | "hinglish";
+  aiDailyLimit: string;
+  /** Empty string = use plan default suggestion count. */
+  aiSuggestionsCount: string;
 };
 
 type Analytics = {
@@ -69,6 +145,55 @@ type Analytics = {
     created_at: string;
   }>;
 };
+
+const AI_ADMIN = adminAiLabels();
+
+const MASTER_QR_GROUP_DETAIL = "masterQrEditBusiness";
+
+function noopMaster(): void {}
+
+/** Master radio: visible in view mode (read-only) and editable when `isEditing`. */
+function channelMasterSelect(
+  isEditing: boolean,
+  setMaster: (t: MasterQrType) => void,
+  value: MasterQrType,
+  current: MasterQrType,
+  eligible: boolean,
+) {
+  return {
+    groupName: MASTER_QR_GROUP_DETAIL,
+    value,
+    current,
+    onSelect: isEditing ? setMaster : noopMaster,
+    disabled: !isEditing || !eligible,
+  };
+}
+
+function detailValuesToMasterBase(v: DetailValues) {
+  return {
+    google_url: v.googleUrl.trim() || null,
+    channels: {
+      instagram: { enabled: v.channels.instagram.enabled, url: v.channels.instagram.url },
+      whatsapp: { enabled: v.channels.whatsapp.enabled, url: v.channels.whatsapp.url },
+      facebook: { enabled: v.channels.facebook.enabled, url: v.channels.facebook.url },
+      website: { enabled: v.channels.website.enabled, url: v.channels.website.url },
+      x: { enabled: v.channels.x.enabled, url: v.channels.x.url },
+    },
+    whatsapp_country_code: v.channels.whatsapp.enabled
+      ? normalizeDialCode(v.whatsappCountryCode || DEFAULT_DIAL_CODE)
+      : null,
+    whatsapp_number: v.channels.whatsapp.enabled
+      ? clampWhatsAppLocalInput(v.whatsappNumber)
+      : null,
+  };
+}
+
+const MAX_BANNER_IMAGES = 10;
+const MAX_IDENTITY_PROOF_IMAGES = 10;
+
+function uploadSlugFromValues(v: Pick<DetailValues, "brandName" | "name" | "slug">): string {
+  return normalizeStorageSlug(v.brandName || v.name || v.slug || "business");
+}
 
 export function BusinessDetailEditor({
   initial,
@@ -102,14 +227,117 @@ export function BusinessDetailEditor({
   const [resourcePreviewUrls, setResourcePreviewUrls] = useState<string[]>([]);
   const [resourceNames, setResourceNames] = useState<string[]>([]);
   const [resourceError, setResourceError] = useState<string | null>(null);
+  const [identityProofFiles, setIdentityProofFiles] = useState<File[]>([]);
+  const [identityProofPreviewUrls, setIdentityProofPreviewUrls] = useState<string[]>([]);
+  const [identityProofNames, setIdentityProofNames] = useState<string[]>([]);
+  const [identityProofError, setIdentityProofError] = useState<string | null>(null);
+  const [clientProfileFiles, setClientProfileFiles] = useState<File[]>([]);
+  const [clientProfilePreviewUrls, setClientProfilePreviewUrls] = useState<string[]>([]);
+  const [clientProfileNames, setClientProfileNames] = useState<string[]>([]);
+  const [clientProfileError, setClientProfileError] = useState<string | null>(null);
   const [brandingErrors, setBrandingErrors] = useState<{
     primaryColor?: string;
     secondaryColor?: string;
   }>({});
   const [businessTypeError, setBusinessTypeError] = useState<string | null>(null);
+  const [identityFieldErrors, setIdentityFieldErrors] = useState<{
+    identityType?: string;
+    identityNumber?: string;
+    identity_proof_urls?: string;
+    client_photo_url?: string;
+  }>({});
+  const [whatsappErrors, setWhatsappErrors] = useState<{
+    whatsappCountryCode?: string;
+    whatsappNumber?: string;
+  }>({});
+  const [callErrors, setCallErrors] = useState<{
+    callCountryCode?: string;
+    callNumber?: string;
+  }>({});
+
+  const valuesRef = useRef<DetailValues>(initial);
+  useEffect(() => {
+    valuesRef.current = values;
+  }, [values]);
 
   useEffect(() => {
     if (!isEditing) {
+      queueMicrotask(() => setIdentityFieldErrors({}));
+      return;
+    }
+    const idType = parseIdentityTypeInput(values.identityType) || null;
+    const idErrs = getIdentityFieldErrors(idType, values.identityNumber);
+    const fin = finalizeIdentityForDb(values.identityType, values.identityNumber);
+    const identityComplete = Boolean(fin.identity_type && fin.identity_number);
+    const proofCount =
+      values.identityProofUrls.length +
+      identityProofFiles.filter((f) => f.type.startsWith("image/")).length;
+    const hasClient =
+      Boolean(values.clientPhotoUrl.trim()) || clientProfileFiles.length > 0;
+    const docErrs = identityComplete
+      ? getIdentityDocumentErrors({
+          identityProofUrlCount: proofCount,
+          clientPhotoUrlPresent: hasClient,
+        })
+      : {};
+    queueMicrotask(() => {
+      setIdentityFieldErrors({
+        ...(idErrs.identity_type ? { identityType: idErrs.identity_type } : {}),
+        ...(idErrs.identity_number ? { identityNumber: idErrs.identity_number } : {}),
+        ...(docErrs.identity_proof_urls
+          ? { identity_proof_urls: docErrs.identity_proof_urls }
+          : {}),
+        ...(docErrs.client_photo_url ? { client_photo_url: docErrs.client_photo_url } : {}),
+      });
+    });
+  }, [
+    isEditing,
+    values.identityType,
+    values.identityNumber,
+    values.identityProofUrls,
+    values.clientPhotoUrl,
+    identityProofFiles,
+    clientProfileFiles,
+  ]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      queueMicrotask(() => setWhatsappErrors({}));
+      return;
+    }
+    const wa = getWhatsAppFormErrors({
+      enabled: values.channels.whatsapp.enabled,
+      countryDialRaw: values.whatsappCountryCode,
+      localRaw: values.whatsappNumber,
+    });
+    queueMicrotask(() => setWhatsappErrors(wa));
+  }, [
+    isEditing,
+    values.channels.whatsapp.enabled,
+    values.whatsappCountryCode,
+    values.whatsappNumber,
+  ]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      queueMicrotask(() => setCallErrors({}));
+      return;
+    }
+    const msgs = CALL_FORM_ERRORS_EN;
+    const ce = getCallFormErrors(
+      {
+        enabled: values.callEnabled,
+        countryDialRaw: values.callCountryCode,
+        localRaw: values.callNumber,
+      },
+      msgs,
+    );
+    queueMicrotask(() => setCallErrors(ce));
+  }, [isEditing, values.callEnabled, values.callCountryCode, values.callNumber]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      queueMicrotask(() => {
       setValues(initial);
       setBaseline(initial);
       setLogoFiles([]);
@@ -133,6 +361,21 @@ export function BusinessDetailEditor({
         prev.forEach((u) => URL.revokeObjectURL(u));
         return [];
       });
+      setIdentityProofFiles([]);
+      setIdentityProofNames([]);
+      setIdentityProofError(null);
+      setIdentityProofPreviewUrls((prev) => {
+        prev.forEach((u) => URL.revokeObjectURL(u));
+        return [];
+      });
+      setClientProfileFiles([]);
+      setClientProfileNames([]);
+      setClientProfileError(null);
+      setClientProfilePreviewUrls((prev) => {
+        prev.forEach((u) => URL.revokeObjectURL(u));
+        return [];
+      });
+      });
     }
   }, [initial, isEditing]);
 
@@ -141,11 +384,76 @@ export function BusinessDetailEditor({
     [values.slug],
   );
 
+  const masterOutbound = useMemo(() => {
+    const base = detailValuesToMasterBase(values);
+    const eff =
+      normalizeMasterQrType(values.masterQrType) ?? computeDefaultMasterQrType(base);
+    return resolveMasterOutboundUrl({ ...base, master_qr_type: eff }, publicUrl);
+  }, [values, publicUrl]);
+
+  const masterTrackUrl = useMemo(() => {
+    if (values.status !== "active" || !values.id) return "";
+    return buildTrackedScanOutUrl(values.id, "master", masterOutbound);
+  }, [values.status, values.id, masterOutbound]);
+
+  const masterLabel = useMemo(() => {
+    const base = detailValuesToMasterBase(values);
+    const eff =
+      normalizeMasterQrType(values.masterQrType) ?? computeDefaultMasterQrType(base);
+    return formatMasterQrTypeLabel(eff);
+  }, [values]);
+
+  const mobileParts = useMemo(() => splitPhoneNumber(values.mobile), [values.mobile]);
+
+  useEffect(() => {
+    if (!isEditing) return;
+    const v = values;
+    const base = detailValuesToMasterBase(v);
+    if (validateMasterQrForPersist({ ...base, master_qr_type: v.masterQrType }) === null) {
+      return;
+    }
+    const d = computeDefaultMasterQrType(base);
+    if (d === v.masterQrType) return;
+    const syncId = window.setTimeout(() => {
+      setValues((s) => (s.masterQrType === d ? s : { ...s, masterQrType: d }));
+    }, 0);
+    return () => window.clearTimeout(syncId);
+  }, [
+    isEditing,
+    values.googleUrl,
+    values.channels,
+    values.whatsappCountryCode,
+    values.whatsappNumber,
+    values.masterQrType,
+  ]);
+  const identityNumberMaxLen = useMemo(() => {
+    const t = parseIdentityTypeInput(values.identityType);
+    if (!t || !isAllowedIdentityTypeSlug(t)) return undefined;
+    return getIdentityNumberMaxLength(t);
+  }, [values.identityType]);
+
   const setField =
     <K extends keyof DetailValues>(key: K) =>
     (value: DetailValues[K]) => {
       if (!isEditing) return;
-      setValues((s) => ({ ...s, [key]: value }));
+      setValues((s) => {
+        let next: DetailValues = { ...s, [key]: value };
+        if (key === "identityType") {
+          const nv = String(value);
+          if (nv !== s.identityType) next = { ...next, identityNumber: "" };
+          if (nv === "") next = { ...next, identityNumber: "" };
+        }
+        if (key === "identityNumber" && typeof value === "string") {
+          const t = parseIdentityTypeInput(next.identityType);
+          if (t && isAllowedIdentityTypeSlug(t)) {
+            next = {
+              ...next,
+              identityNumber: formatIdentityNumberInput(t, value),
+            };
+          }
+        }
+        return next;
+      });
       setSubmitError(null);
       setSubmitSuccess(null);
       if (key === "primaryColor" || key === "secondaryColor") {
@@ -174,11 +482,24 @@ export function BusinessDetailEditor({
       setSubmitSuccess(null);
     };
 
+  const copyFeedbackTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(
+    () => () => {
+      if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+    },
+    [],
+  );
+
   const handleCopy = async () => {
     try {
       await navigator.clipboard.writeText(publicUrl);
       setCopied(true);
-      setTimeout(() => setCopied(false), 1200);
+      if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
+      copyFeedbackTimerRef.current = setTimeout(() => {
+        setCopied(false);
+        copyFeedbackTimerRef.current = null;
+      }, 1200);
     } catch {
       setCopied(false);
     }
@@ -205,8 +526,19 @@ export function BusinessDetailEditor({
     setResourceError(null);
     resourcePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
     setResourcePreviewUrls([]);
+    setIdentityProofFiles([]);
+    setIdentityProofNames([]);
+    setIdentityProofError(null);
+    identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+    setIdentityProofPreviewUrls([]);
+    setClientProfileFiles([]);
+    setClientProfileNames([]);
+    setClientProfileError(null);
+    clientProfilePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+    setClientProfilePreviewUrls([]);
     setBrandingErrors({});
     setBusinessTypeError(null);
+    setIdentityFieldErrors({});
   };
 
   const hasDirty = useMemo(
@@ -214,23 +546,39 @@ export function BusinessDetailEditor({
       logoFiles.length > 0 ||
       bannerFiles.length > 0 ||
       resourceFiles.length > 0 ||
+      identityProofFiles.length > 0 ||
+      clientProfileFiles.length > 0 ||
       !isPatchPayloadEqual(toPatchPayload(values), toPatchPayload(baseline)),
-    [values, baseline, logoFiles.length, bannerFiles.length, resourceFiles.length],
+    [
+      values,
+      baseline,
+      logoFiles.length,
+      bannerFiles.length,
+      resourceFiles.length,
+      identityProofFiles.length,
+      clientProfileFiles.length,
+    ],
   );
 
   const handleSave = async () => {
     if (isSaving) return;
-    if (logoError || bannerError || resourceError) {
+    const saveSnap = valuesRef.current;
+    const mobileError = validateInternationalPhone(saveSnap.mobile.trim());
+    if (mobileError) {
+      setSubmitError(`Mobile: ${mobileError}`);
+      return;
+    }
+    if (logoError || bannerError || resourceError || identityProofError || clientProfileError) {
       setSubmitError("Please resolve media upload errors before saving.");
       return;
     }
-    if (!values.businessType.trim()) {
+    if (!saveSnap.businessType.trim()) {
       setBusinessTypeError("Please select a business type");
       return;
     }
     setBusinessTypeError(null);
-    const primaryColorErr = validateBrandHexColor(values.primaryColor);
-    const secondaryColorErr = validateBrandHexColor(values.secondaryColor);
+    const primaryColorErr = validateBrandHexColor(saveSnap.primaryColor);
+    const secondaryColorErr = validateBrandHexColor(saveSnap.secondaryColor);
     if (primaryColorErr || secondaryColorErr) {
       setBrandingErrors({
         ...(primaryColorErr ? { primaryColor: primaryColorErr } : {}),
@@ -240,21 +588,114 @@ export function BusinessDetailEditor({
       return;
     }
     setBrandingErrors({});
-    const patch = buildPatchPayload(values, baseline);
+    if (saveSnap.channels.whatsapp.enabled) {
+      const waErrs = getWhatsAppFormErrors({
+        enabled: true,
+        countryDialRaw: saveSnap.whatsappCountryCode,
+        localRaw: saveSnap.whatsappNumber,
+      });
+      if (Object.keys(waErrs).length > 0) {
+        setWhatsappErrors(waErrs);
+        const parts = [waErrs.whatsappCountryCode, waErrs.whatsappNumber].filter(Boolean);
+        setSubmitError(`WhatsApp: ${parts.join(" ")}`);
+        queueMicrotask(() => {
+          const id = waErrs.whatsappCountryCode ? "whatsappCountryCode" : "whatsappNumber";
+          document.getElementById(id)?.focus({ preventScroll: false });
+        });
+        return;
+      }
+    } else {
+      setWhatsappErrors({});
+    }
+    if (saveSnap.callEnabled) {
+      const msgs = CALL_FORM_ERRORS_EN;
+      const ce = getCallFormErrors(
+        {
+          enabled: true,
+          countryDialRaw: saveSnap.callCountryCode,
+          localRaw: saveSnap.callNumber,
+        },
+        msgs,
+      );
+      if (Object.keys(ce).length > 0) {
+        setCallErrors(ce);
+        const parts = [ce.callCountryCode, ce.callNumber].filter(Boolean);
+        setSubmitError(`Call: ${parts.join(" ")}`);
+        queueMicrotask(() => {
+          const id = ce.callCountryCode ? "callCountryCode" : "callNumber";
+          document.getElementById(id)?.focus({ preventScroll: false });
+        });
+        return;
+      }
+    } else {
+      setCallErrors({});
+    }
+    const masterBaseSave = detailValuesToMasterBase(saveSnap);
+    const masterErrSave = validateMasterQrForPersist({
+      ...masterBaseSave,
+      master_qr_type: saveSnap.masterQrType,
+    });
+    if (masterErrSave) {
+      setSubmitError(masterErrSave);
+      return;
+    }
+    const idType = parseIdentityTypeInput(saveSnap.identityType) || null;
+    const idErrs = getIdentityFieldErrors(idType, saveSnap.identityNumber);
+    const fin = finalizeIdentityForDb(saveSnap.identityType, saveSnap.identityNumber);
+    const identityComplete = Boolean(fin.identity_type && fin.identity_number);
+    const proofTotal =
+      saveSnap.identityProofUrls.length +
+      identityProofFiles.filter((f) => f.type.startsWith("image/")).length;
+    const hasClient =
+      Boolean(saveSnap.clientPhotoUrl.trim()) || clientProfileFiles.length > 0;
+    const docErrs = identityComplete
+      ? getIdentityDocumentErrors({
+          identityProofUrlCount: proofTotal,
+          clientPhotoUrlPresent: hasClient,
+        })
+      : {};
+    const mergedIdentityErrors = {
+      ...(idErrs.identity_type ? { identityType: idErrs.identity_type } : {}),
+      ...(idErrs.identity_number ? { identityNumber: idErrs.identity_number } : {}),
+      ...(docErrs.identity_proof_urls ? { identity_proof_urls: docErrs.identity_proof_urls } : {}),
+      ...(docErrs.client_photo_url ? { client_photo_url: docErrs.client_photo_url } : {}),
+    };
+    if (Object.keys(mergedIdentityErrors).length > 0) {
+      setIdentityFieldErrors(mergedIdentityErrors);
+      setSubmitError("Please fix identity fields before saving.");
+      return;
+    }
+    const patch = buildPatchPayload(saveSnap, baseline);
     let nextLogoUrl: string | null = null;
     let nextBannerUrls: string[] | null = null;
     let nextResourceUrls: string[] | null = null;
-    const oldLogoUrl = values.logoUrl || null;
+    let nextIdentityProofUrls: string[] | null = null;
+    let nextClientPhotoUrl: string | null = null;
+    const oldLogoUrl = saveSnap.logoUrl || null;
+    const oldClientPhotoUrl = saveSnap.clientPhotoUrl.trim() || null;
+    const uploadSlug = uploadSlugFromValues(saveSnap);
+    const uploadedOrphans: string[] = [];
+
+    if (saveSnap.banners.length + bannerFiles.length > MAX_BANNER_IMAGES) {
+      setBannerError(
+        `Maximum ${MAX_BANNER_IMAGES} banners allowed (${saveSnap.banners.length} saved + ${bannerFiles.length} new).`,
+      );
+      setSubmitError("Please resolve media upload errors before saving.");
+      return;
+    }
 
     if (logoFiles.length > 0) {
       try {
         const uploaded = await uploadMediaFiles({
           files: logoFiles.slice(0, 1),
           kind: "logo",
-          businessSlug: values.brandName || values.name || values.slug || "business",
+          businessSlug: saveSnap.brandName || saveSnap.name || saveSnap.slug || "business",
         });
         nextLogoUrl = uploaded[0] ?? null;
-        if (nextLogoUrl) patch.logo_url = nextLogoUrl;
+        if (nextLogoUrl) {
+          patch.logo_url = nextLogoUrl;
+          uploadedOrphans.push(...uploaded);
+        }
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to upload logo";
         setSubmitError(message);
@@ -266,27 +707,78 @@ export function BusinessDetailEditor({
         const uploaded = await uploadMediaFiles({
           files: bannerFiles,
           kind: "banner",
-          businessSlug: values.brandName || values.name || values.slug || "business",
+          businessSlug: uploadSlug,
         });
-        nextBannerUrls = uploaded;
-        patch.banner_urls = uploaded;
+        const merged = dedupeMediaUrls([...saveSnap.banners, ...uploaded]);
+        nextBannerUrls = merged;
+        patch.banner_urls = merged;
+        uploadedOrphans.push(...uploaded);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to upload banner images";
         setSubmitError(message);
         return;
       }
+    } else if (
+      JSON.stringify(dedupeMediaUrls(saveSnap.banners)) !==
+      JSON.stringify(dedupeMediaUrls(baseline.banners))
+    ) {
+      patch.banner_urls = dedupeMediaUrls(saveSnap.banners);
     }
     if (resourceFiles.length > 0) {
       try {
         const uploaded = await uploadMediaFiles({
           files: resourceFiles,
           kind: "resource",
-          businessSlug: values.brandName || values.name || values.slug || "business",
+          businessSlug: uploadSlug,
         });
         nextResourceUrls = uploaded;
         patch.resource_urls = uploaded;
+        uploadedOrphans.push(...uploaded);
       } catch (err) {
         const message = err instanceof Error ? err.message : "Failed to upload resource files";
+        setSubmitError(message);
+        return;
+      }
+    } else if (
+      JSON.stringify(dedupeMediaUrls(saveSnap.resources)) !==
+      JSON.stringify(dedupeMediaUrls(baseline.resources))
+    ) {
+      patch.resource_urls = dedupeMediaUrls(saveSnap.resources);
+    }
+    if (identityProofFiles.length > 0) {
+      try {
+        const uploaded = await uploadMediaFiles({
+          files: identityProofFiles,
+          kind: "identity_proof",
+          businessSlug: uploadSlug,
+        });
+        const merged = dedupeMediaUrls([...saveSnap.identityProofUrls, ...uploaded]);
+        nextIdentityProofUrls = merged;
+        patch.identity_proof_urls = merged;
+        uploadedOrphans.push(...uploaded);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to upload identity proof images";
+        setSubmitError(message);
+        return;
+      }
+    }
+    if (clientProfileFiles.length > 0) {
+      try {
+        const uploaded = await uploadMediaFiles({
+          files: clientProfileFiles.slice(0, 1),
+          kind: "client_photo",
+          businessSlug: uploadSlug,
+        });
+        const url = uploaded[0] ?? null;
+        if (url) {
+          nextClientPhotoUrl = url;
+          patch.client_photo_url = url;
+          uploadedOrphans.push(url);
+        }
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : "Failed to upload client profile photo";
         setSubmitError(message);
         return;
       }
@@ -301,14 +793,17 @@ export function BusinessDetailEditor({
     setSubmitSuccess(null);
 
     try {
-      const res = await fetch(`/api/business/${values.id}`, {
+      const res = await fetch(`/api/business/${saveSnap.id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(patch),
+        body: JSON.stringify(sanitizeBusinessPatchRecord(patch)),
       });
 
       const result: unknown = await res.json().catch(() => null);
       if (!res.ok) {
+        if (uploadedOrphans.length > 0) {
+          void deleteMediaUrls(uploadedOrphans, { businessSlug: uploadSlug });
+        }
         const msg =
           typeof result === "object" &&
           result !== null &&
@@ -317,6 +812,26 @@ export function BusinessDetailEditor({
             ? (result as { error: string }).error
             : "Failed to save changes";
         setSubmitError(msg);
+        const fields =
+          typeof result === "object" &&
+          result !== null &&
+          "fields" in result &&
+          typeof (result as { fields?: unknown }).fields === "object" &&
+          (result as { fields?: unknown }).fields !== null
+            ? ((result as { fields: Record<string, unknown> }).fields as Record<string, unknown>)
+            : null;
+        if (fields) {
+          setIdentityFieldErrors((prev) => {
+            const next = { ...prev };
+            const ft = fields.identity_type;
+            const fn = fields.identity_number;
+            if (typeof ft === "string") next.identityType = ft;
+            else delete next.identityType;
+            if (typeof fn === "string") next.identityNumber = fn;
+            else delete next.identityNumber;
+            return next;
+          });
+        }
         return;
       }
 
@@ -333,17 +848,46 @@ export function BusinessDetailEditor({
       setSubmitSuccess("Changes saved successfully.");
       setBrandingErrors({});
       setBusinessTypeError(null);
-      const nextValues = {
-        ...values,
-        logoUrl: nextLogoUrl ?? values.logoUrl,
-        banners: nextBannerUrls ?? values.banners,
-        resources: nextResourceUrls ?? values.resources,
+      setIdentityFieldErrors({});
+      let nextValues: DetailValues = {
+        ...saveSnap,
+        logoUrl: nextLogoUrl ?? saveSnap.logoUrl,
+        banners: nextBannerUrls ?? saveSnap.banners,
+        resources: nextResourceUrls ?? saveSnap.resources,
+        identityProofUrls: nextIdentityProofUrls ?? saveSnap.identityProofUrls,
+        clientPhotoUrl: nextClientPhotoUrl ?? saveSnap.clientPhotoUrl,
       };
+      if (typeof result === "object" && result !== null && "master_qr_type" in result) {
+        const rawM = (result as { master_qr_type?: unknown }).master_qr_type;
+        if (typeof rawM === "string") {
+          const n = normalizeMasterQrType(rawM);
+          if (n) nextValues = { ...nextValues, masterQrType: n };
+        } else if (rawM === null) {
+          nextValues = {
+            ...nextValues,
+            masterQrType: computeDefaultMasterQrType(detailValuesToMasterBase(nextValues)),
+          };
+        }
+      }
       setValues(nextValues);
       setBaseline(nextValues);
       setIsEditing(false);
-      if (nextLogoUrl && oldLogoUrl && oldLogoUrl !== nextLogoUrl) {
-        void removeMediaFiles([oldLogoUrl]);
+      const finalBanners = nextBannerUrls ?? saveSnap.banners;
+      const finalResources = nextResourceUrls ?? saveSnap.resources;
+      const finalIdentity = nextIdentityProofUrls ?? saveSnap.identityProofUrls;
+      const storageCleanup = dedupeMediaUrls([
+        ...diffRemovedMediaUrls(baseline.banners, finalBanners),
+        ...diffRemovedMediaUrls(baseline.resources, finalResources),
+        ...diffRemovedMediaUrls(baseline.identityProofUrls, finalIdentity),
+        ...(nextLogoUrl && oldLogoUrl && oldLogoUrl !== nextLogoUrl ? [oldLogoUrl] : []),
+        ...(nextClientPhotoUrl &&
+        oldClientPhotoUrl &&
+        oldClientPhotoUrl !== nextClientPhotoUrl
+          ? [oldClientPhotoUrl]
+          : []),
+      ]);
+      if (storageCleanup.length > 0) {
+        void deleteMediaUrls(storageCleanup, { businessSlug: uploadSlugFromValues(nextValues) });
       }
       setLogoFiles([]);
       setLogoNames([]);
@@ -360,6 +904,16 @@ export function BusinessDetailEditor({
       setResourceError(null);
       resourcePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
       setResourcePreviewUrls([]);
+      setIdentityProofFiles([]);
+      setIdentityProofNames([]);
+      setIdentityProofError(null);
+      identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+      setIdentityProofPreviewUrls([]);
+      setClientProfileFiles([]);
+      setClientProfileNames([]);
+      setClientProfileError(null);
+      clientProfilePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+      setClientProfilePreviewUrls([]);
       router.refresh();
     } catch {
       setSubmitError("Network error. Please try again.");
@@ -452,16 +1006,55 @@ export function BusinessDetailEditor({
             {copied ? "Copied" : "Copy"}
           </button>
         </div>
+        <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200/80 bg-indigo-50/60 px-3 py-2.5 dark:border-indigo-900/50 dark:bg-indigo-950/25">
+          <span className="rounded bg-indigo-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
+            Master QR
+          </span>
+          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{masterLabel}</span>
+          {values.directRedirect ? (
+            <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
+              Direct redirect on
+            </span>
+          ) : (
+            <span className="text-xs text-zinc-500 dark:text-zinc-400">Direct redirect off</span>
+          )}
+        </div>
+        <p className="mt-3 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+          Scans and pasted public links use the tracked master URL when direct redirect is on.
+          Change master under Review Settings and Channels (Edit).
+        </p>
+        <div className="mt-4 rounded-xl border border-zinc-200/80 bg-zinc-50/50 px-3 py-2.5 text-xs dark:border-zinc-800 dark:bg-zinc-950/30">
+          <p className="font-medium text-zinc-700 dark:text-zinc-200">Call CTA (public page)</p>
+          <p className="mt-1 text-zinc-600 dark:text-zinc-400">
+            {values.callEnabled ? "Enabled" : "Disabled"}
+            {(() => {
+              const href = buildCallTelHref(
+                values.callEnabled,
+                values.callCountryCode,
+                values.callNumber,
+              );
+              return href ? (
+                <>
+                  {" · "}
+                  <code className="break-all text-[11px] text-zinc-800 dark:text-zinc-200">
+                    {href}
+                  </code>
+                </>
+              ) : null;
+            })()}
+          </p>
+        </div>
       </div>
 
       {values.status === "active" ? (
         <>
           <QrCodeCard
-            value={publicUrl}
+            value={masterTrackUrl || publicUrl}
             brandLabel={values.brandName || values.name || "business"}
             logoUrl={values.logoUrl.trim() ? values.logoUrl : null}
+            masterLabel={masterLabel}
           />
-          <QrLinksCard values={values} />
+          <QrLinksCard values={values} masterTrackUrl={masterTrackUrl} />
         </>
       ) : (
         <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 text-sm text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-400 sm:p-5">
@@ -509,14 +1102,43 @@ export function BusinessDetailEditor({
               />
             </FormField>
             <FormField label="Mobile" htmlFor="mobile">
-              <input
-                id="mobile"
-                type="tel"
-                value={values.mobile}
-                onChange={(e) => setField("mobile")(sanitizeMobileInput(e.target.value))}
-                className={formInputBase}
-                disabled={!isEditing}
-              />
+              <div className="flex gap-2">
+                <select
+                  id="mobile-country"
+                  value={mobileParts.dialCode}
+                  onChange={(e) =>
+                    setField("mobile")(
+                      joinDialAndLocal(e.target.value, mobileParts.localNumber),
+                    )
+                  }
+                  className={`${formSelectBase} shrink-0`}
+                  disabled={!isEditing}
+                >
+                  {COUNTRY_DIAL_CODES.map((c) => (
+                    <option key={`${c.code}-${c.dialCode}`} value={c.dialCode}>
+                      {`${c.code} ${c.dialCode}`}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  id="mobile"
+                  type="tel"
+                  autoComplete="tel-national"
+                  inputMode="numeric"
+                  value={mobileParts.localNumber}
+                  onChange={(e) =>
+                    setField("mobile")(
+                      joinDialAndLocal(
+                        mobileParts.dialCode,
+                        sanitizePhoneLocalInput(sanitizeMobileInput(e.target.value)),
+                      ),
+                    )
+                  }
+                  className={`${formInputBase} flex-1`}
+                  disabled={!isEditing}
+                  placeholder="9876543210"
+                />
+              </div>
             </FormField>
             <FormField label="Brand Name" htmlFor="brandName">
               <input
@@ -527,6 +1149,243 @@ export function BusinessDetailEditor({
                 disabled={!isEditing}
               />
             </FormField>
+            <FormField
+              label="Identity type"
+              htmlFor="identityType"
+              required
+              error={identityFieldErrors.identityType}
+            >
+              {!isEditing ? (
+                <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-200">
+                  {identityTypeLabel(values.identityType)}
+                </p>
+              ) : (
+                <select
+                  id="identityType"
+                  value={values.identityType}
+                  onChange={(e) => setField("identityType")(e.target.value)}
+                  className={[
+                    formSelectBase,
+                    identityFieldErrors.identityType ? formInputError : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" ")}
+                >
+                  <option value="aadhaar">Aadhaar</option>
+                  <option value="pan">PAN</option>
+                  <option value="passport">Passport</option>
+                  <option value="voter_id">Voter ID</option>
+                </select>
+              )}
+            </FormField>
+            <FormField
+              label="Identity number"
+              htmlFor="identityNumber"
+              required
+              error={identityFieldErrors.identityNumber}
+            >
+              {!isEditing ? (
+                <p className="mt-1 text-sm text-zinc-800 dark:text-zinc-200">
+                  {values.identityType ? values.identityNumber || "—" : "—"}
+                </p>
+              ) : (
+                <input
+                  id="identityNumber"
+                  type="text"
+                  autoComplete="off"
+                  autoCapitalize={values.identityType === "aadhaar" ? "none" : "characters"}
+                  inputMode={values.identityType === "aadhaar" ? "numeric" : "text"}
+                  maxLength={identityNumberMaxLen}
+                  value={values.identityNumber}
+                  onChange={(e) => setField("identityNumber")(e.target.value)}
+                  disabled={!values.identityType}
+                  className={`${formInputBase} w-full ${
+                    identityFieldErrors.identityNumber ? formInputError : ""
+                  }`}
+                  placeholder={
+                    values.identityType === "aadhaar"
+                      ? "12-digit Aadhaar number"
+                      : values.identityType === "pan"
+                        ? "e.g. ABCDE1234F"
+                        : values.identityType === "passport"
+                          ? "6–20 letters, numbers, or hyphen"
+                          : values.identityType === "voter_id"
+                            ? "3–15 alphanumeric characters"
+                            : "Select identity type first"
+                  }
+                />
+              )}
+            </FormField>
+            <div className="sm:col-span-2 space-y-6 border-t border-zinc-100 pt-6 dark:border-zinc-800">
+              <div>
+                <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  Identity proof photos
+                </p>
+                {!isEditing ? (
+                  <div className="mt-3">
+                    <MediaPreview
+                      title="Saved proofs"
+                      items={values.identityProofUrls}
+                      emptyLabel="No identity proof images uploaded"
+                    />
+                  </div>
+                ) : (
+                  <div className="mt-3 space-y-4">
+                    {values.identityProofUrls.length > 0 ? (
+                      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                        {values.identityProofUrls.map((url, idx) => (
+                          <div
+                            key={`${url}-${idx}`}
+                            className="relative overflow-hidden rounded-lg border border-zinc-200 bg-white dark:border-zinc-700 dark:bg-zinc-900"
+                          >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img
+                              src={url}
+                              alt={`Identity proof ${idx + 1}`}
+                              className="h-28 w-full object-cover"
+                            />
+                            <button
+                              type="button"
+                              className="absolute right-1 top-1 rounded bg-black/60 px-2 py-0.5 text-xs font-medium text-white hover:bg-black/80"
+                              onClick={() =>
+                                setValues((s) => ({
+                                  ...s,
+                                  identityProofUrls: s.identityProofUrls.filter((_, i) => i !== idx),
+                                }))
+                              }
+                            >
+                              Remove
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-sm text-zinc-500 dark:text-zinc-400">
+                        No identity proof images yet — add files below.
+                      </p>
+                    )}
+                    <FileUploadField
+                      id="editIdentityProof"
+                      label="Add identity proof images"
+                      accept={BUSINESS_IMAGE_ACCEPT}
+                      multiple
+                      maxFiles={Math.max(0, MAX_IDENTITY_PROOF_IMAGES - values.identityProofUrls.length)}
+                      fileNames={identityProofNames}
+                      previewUrls={identityProofPreviewUrls}
+                      uploading={isSaving && identityProofFiles.length > 0}
+                      error={identityProofError ?? identityFieldErrors.identity_proof_urls}
+                      onClearAll={() => {
+                        setIdentityProofFiles([]);
+                        setIdentityProofNames([]);
+                        identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                        setIdentityProofPreviewUrls([]);
+                        setIdentityProofError(null);
+                      }}
+                      onRemoveAt={(index) => {
+                        const next = identityProofFiles.filter((_, i) => i !== index);
+                        setIdentityProofFiles(next);
+                        setIdentityProofNames(next.map((f) => f.name));
+                        identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                        setIdentityProofPreviewUrls(
+                          next
+                            .filter((f) => f.type.startsWith("image/"))
+                            .map((f) => URL.createObjectURL(f)),
+                        );
+                        setIdentityProofError(null);
+                      }}
+                      onFilesChange={(files) => {
+                        const incoming = files ? Array.from(files) : [];
+                        const slotsLeft = Math.max(
+                          0,
+                          MAX_IDENTITY_PROOF_IMAGES - values.identityProofUrls.length,
+                        );
+                        const { accepted, errors } = validateAndMergeFiles({
+                          incoming,
+                          existing: identityProofFiles,
+                          maxCount: slotsLeft,
+                        });
+                        setIdentityProofFiles(accepted);
+                        setIdentityProofNames(accepted.map((f) => f.name));
+                        identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                        setIdentityProofPreviewUrls(
+                          accepted
+                            .filter((f) => f.type.startsWith("image/"))
+                            .map((f) => URL.createObjectURL(f)),
+                        );
+                        setIdentityProofError(errors[0] ?? null);
+                      }}
+                      hint="JPG, PNG, or WebP — up to 10 images, 5MB each."
+                    />
+                  </div>
+                )}
+              </div>
+              <div>
+                <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">
+                  Client profile photo
+                </p>
+                <div className="mt-3 rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
+                  {clientProfilePreviewUrls[0] ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={clientProfilePreviewUrls[0]}
+                      alt="Client profile preview"
+                      className="max-h-40 w-auto rounded-lg border border-zinc-200 bg-white object-contain dark:border-zinc-700 dark:bg-zinc-900"
+                    />
+                  ) : values.clientPhotoUrl.trim() ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={values.clientPhotoUrl}
+                      alt="Client profile"
+                      className="max-h-40 w-auto rounded-lg border border-zinc-200 bg-white object-contain dark:border-zinc-700 dark:bg-zinc-900"
+                    />
+                  ) : (
+                    <p className="text-sm text-zinc-500 dark:text-zinc-400">No client profile photo</p>
+                  )}
+                  {isEditing ? (
+                    <div className="mt-4">
+                      <FileUploadField
+                        id="editClientProfilePhoto"
+                        label="Replace client profile photo"
+                        accept={BUSINESS_IMAGE_ACCEPT}
+                        fileNames={clientProfileNames}
+                        previewUrls={clientProfilePreviewUrls}
+                        maxFiles={1}
+                        hideUploadWhenFilled
+                        uploading={isSaving && clientProfileFiles.length > 0}
+                        error={clientProfileError ?? identityFieldErrors.client_photo_url}
+                        onRemoveAt={() => {
+                          setClientProfileFiles([]);
+                          setClientProfileNames([]);
+                          clientProfilePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                          setClientProfilePreviewUrls([]);
+                          setClientProfileError(null);
+                          setValues((s) => ({ ...s, clientPhotoUrl: "" }));
+                        }}
+                        onFilesChange={(files) => {
+                          const incoming = files ? Array.from(files) : [];
+                          const { accepted, errors } = validateAndMergeFiles({
+                            incoming,
+                            existing: [],
+                            maxCount: 1,
+                          });
+                          const next = accepted.slice(0, 1);
+                          setClientProfileFiles(next);
+                          setClientProfileNames(next.map((f) => f.name));
+                          clientProfilePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                          setClientProfilePreviewUrls(
+                            next
+                              .filter((f) => f.type.startsWith("image/"))
+                              .map((f) => URL.createObjectURL(f)),
+                          );
+                          setClientProfileError(errors[0] ?? null);
+                        }}
+                        hint="Single JPG, PNG, or WebP — max 5MB."
+                      />
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            </div>
           </div>
         </FormSection>
 
@@ -639,7 +1498,7 @@ export function BusinessDetailEditor({
                   <FileUploadField
                     id="editBusinessLogo"
                     label="Replace logo"
-                    accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                    accept={BUSINESS_IMAGE_ACCEPT}
                     fileNames={logoNames}
                     previewUrls={logoPreviewUrls}
                     maxFiles={1}
@@ -679,30 +1538,39 @@ export function BusinessDetailEditor({
           </div>
 
           <div className="mt-8 space-y-4 border-t border-zinc-100 pt-8 dark:border-zinc-800">
-            <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Banner images</p>
-            <MediaPreview
-              title="Current banners"
-              items={bannerPreviewUrls.length > 0 ? bannerPreviewUrls : values.banners}
-              emptyLabel="No banners uploaded"
-            />
-            {isEditing && values.banners.length > 0 && bannerPreviewUrls.length === 0 ? (
-              <div className="flex justify-end">
-                <button
-                  type="button"
-                  className={adminPanel.btnSecondary}
-                  onClick={() => setValues((s) => ({ ...s, banners: [] }))}
-                >
-                  Remove existing banners
-                </button>
-              </div>
-            ) : null}
+            <div className="flex flex-wrap items-baseline justify-between gap-2">
+              <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">Banner images</p>
+              {isEditing ? (
+                <p className="text-xs text-zinc-500 dark:text-zinc-400">
+                  {values.banners.length + bannerFiles.length} / {MAX_BANNER_IMAGES} banners
+                </p>
+              ) : null}
+            </div>
+            <div className="space-y-2 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
+              <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Saved banners</p>
+              {isEditing ? (
+                <ExistingMediaGrid
+                  urls={values.banners}
+                  emptyLabel="No banners uploaded"
+                  editable
+                  onRemove={(_idx, url) =>
+                    setValues((s) => ({
+                      ...s,
+                      banners: s.banners.filter((u) => u !== url),
+                    }))
+                  }
+                />
+              ) : (
+                <ExistingMediaGrid urls={values.banners} emptyLabel="No banners uploaded" />
+              )}
+            </div>
             {isEditing ? (
               <FileUploadField
                 id="editBusinessBanners"
-                label="Add or replace banners"
-                accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                label="Upload additional banners"
+                accept={BUSINESS_IMAGE_ACCEPT}
                 multiple
-                maxFiles={10}
+                maxFiles={Math.max(0, MAX_BANNER_IMAGES - values.banners.length)}
                 fileNames={bannerNames}
                 previewUrls={bannerPreviewUrls}
                 uploading={isSaving && bannerFiles.length > 0}
@@ -725,10 +1593,17 @@ export function BusinessDetailEditor({
                 }}
                 onFilesChange={(files) => {
                   const incoming = files ? Array.from(files) : [];
+                  const slotsLeft = Math.max(0, MAX_BANNER_IMAGES - values.banners.length);
+                  if (slotsLeft === 0 && incoming.length > 0) {
+                    setBannerError(
+                      `Maximum ${MAX_BANNER_IMAGES} banners allowed. Remove a saved banner to add more.`,
+                    );
+                    return;
+                  }
                   const { accepted, errors } = validateAndMergeFiles({
                     incoming,
-                    existing: [],
-                    maxCount: 10,
+                    existing: bannerFiles,
+                    maxCount: slotsLeft,
                   });
                   setBannerFiles(accepted);
                   setBannerNames(accepted.map((f) => f.name));
@@ -738,7 +1613,13 @@ export function BusinessDetailEditor({
                   );
                   setBannerError(errors[0] ?? null);
                 }}
-                hint="Multiple images supported (up to 10)."
+                hint={`Add up to ${MAX_BANNER_IMAGES} banners total (5MB each). New images append to saved banners when you save.`}
+              />
+            ) : values.banners.length > 0 ? (
+              <MediaPreview
+                title="Banner preview"
+                items={values.banners}
+                emptyLabel="No banners uploaded"
               />
             ) : null}
           </div>
@@ -810,6 +1691,69 @@ export function BusinessDetailEditor({
           </div>
         </FormSection>
 
+        <FormSection
+          title={AI_ADMIN.business.sectionTitle}
+          description="Phase 1 — stored preferences only; generation UI comes later."
+        >
+          <div className="grid gap-5 sm:grid-cols-2">
+            <FormToggle
+              id="aiEnabled"
+              label={AI_ADMIN.business.enabled}
+              checked={values.aiEnabled}
+              onChange={setField("aiEnabled")}
+              disabled={!isEditing}
+            />
+            <FormField label={AI_ADMIN.business.language} htmlFor="aiReviewLanguage">
+              <select
+                id="aiReviewLanguage"
+                value={values.aiReviewLanguage}
+                onChange={(e) =>
+                  setField("aiReviewLanguage")(e.target.value as DetailValues["aiReviewLanguage"])
+                }
+                className={formInputBase}
+                disabled={!isEditing}
+              >
+                <option value="en">{AI_ADMIN.business.languageEn}</option>
+                <option value="hi">{AI_ADMIN.business.languageHi}</option>
+                <option value="hinglish">{AI_ADMIN.business.languageHinglish}</option>
+              </select>
+            </FormField>
+            <FormField
+              label={AI_ADMIN.business.dailyLimit}
+              htmlFor="aiDailyLimit"
+              hint="Server-side cap for AI calls per UTC day."
+            >
+              <input
+                id="aiDailyLimit"
+                type="number"
+                min={1}
+                max={50000}
+                value={values.aiDailyLimit}
+                onChange={(e) => setField("aiDailyLimit")(e.target.value)}
+                className={formInputBase}
+                disabled={!isEditing}
+              />
+            </FormField>
+            <FormField
+              label={AI_ADMIN.business.suggestionsCount}
+              htmlFor="aiSuggestionsCount"
+              hint={`${AI_ADMIN.business.planDefaultHint}. ${AI_ADMIN.business.effectiveSuggestions}: ${values.aiSuggestionsCount.trim() ? values.aiSuggestionsCount.trim() : String(defaultSuggestionsForPlan(values.planType))}.`}
+            >
+              <input
+                id="aiSuggestionsCount"
+                type="number"
+                min={1}
+                max={20}
+                placeholder="Plan default"
+                value={values.aiSuggestionsCount}
+                onChange={(e) => setField("aiSuggestionsCount")(e.target.value)}
+                className={formInputBase}
+                disabled={!isEditing}
+              />
+            </FormField>
+          </div>
+        </FormSection>
+
         <FormSection title="SECTION 4: Review Settings">
           <div className="grid gap-5 lg:grid-cols-2">
             <FormField label="Google URL" htmlFor="googleUrl">
@@ -820,6 +1764,29 @@ export function BusinessDetailEditor({
                 className={formInputBase}
                 disabled={!isEditing}
               />
+              <label
+                className={`mt-2 flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 ${
+                  isEditing &&
+                  values.googleUrl.trim() &&
+                  isSafeHttpUrl(values.googleUrl.trim())
+                    ? "cursor-pointer"
+                    : "cursor-default"
+                }`}
+              >
+                <input
+                  type="radio"
+                  name={MASTER_QR_GROUP_DETAIL}
+                  checked={values.masterQrType === "google_review"}
+                  disabled={
+                    !isEditing ||
+                    !values.googleUrl.trim() ||
+                    !isSafeHttpUrl(values.googleUrl.trim())
+                  }
+                  onChange={() => setField("masterQrType")("google_review")}
+                  className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                <span>Set as Master QR (Google Review)</span>
+              </label>
             </FormField>
             <FormField label="Threshold" htmlFor="threshold">
               <select
@@ -829,8 +1796,11 @@ export function BusinessDetailEditor({
                 className={formInputBase}
                 disabled={!isEditing}
               >
+                <option value="1">1</option>
+                <option value="2">2</option>
                 <option value="3">3</option>
                 <option value="4">4</option>
+                <option value="5">5</option>
               </select>
             </FormField>
           </div>
@@ -916,7 +1886,7 @@ export function BusinessDetailEditor({
           </FormField>
         </FormSection>
 
-        <FormSection title="SECTION 5: Channels">
+        <FormSection title="SECTION 5: Channels" description="Enable links and choose exactly one Master QR for the primary scan destination.">
           <div className="grid gap-4 lg:grid-cols-2">
             <ChannelEditor
               label="Instagram"
@@ -924,20 +1894,148 @@ export function BusinessDetailEditor({
               onToggle={setChannel("instagram", "enabled")}
               onUrl={setChannel("instagram", "url")}
               disabled={!isEditing}
+              masterSelect={channelMasterSelect(
+                isEditing,
+                (t) => setField("masterQrType")(t),
+                "instagram",
+                values.masterQrType,
+                values.channels.instagram.enabled === true &&
+                  isSafeHttpUrl(values.channels.instagram.url.trim()),
+              )}
             />
-            <ChannelEditor
-              label="WhatsApp"
-              channel={values.channels.whatsapp}
-              onToggle={setChannel("whatsapp", "enabled")}
-              onUrl={setChannel("whatsapp", "url")}
-              disabled={!isEditing}
-            />
+            {!isEditing ? (
+              <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
+                <WhatsAppChannelReadOnly
+                  enabled={values.channels.whatsapp.enabled}
+                  dialCode={values.whatsappCountryCode}
+                  localNumber={values.whatsappNumber}
+                />
+                <label className="flex cursor-default items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                  <input
+                    type="radio"
+                    name={MASTER_QR_GROUP_DETAIL}
+                    checked={values.masterQrType === "whatsapp"}
+                    disabled
+                    className="accent-indigo-600 opacity-80"
+                  />
+                  <span>Master QR (WhatsApp)</span>
+                </label>
+              </div>
+            ) : (
+              <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
+                <WhatsAppChannelFields
+                  enabled={values.channels.whatsapp.enabled}
+                  onEnabledChange={setChannel("whatsapp", "enabled")}
+                  dialCode={values.whatsappCountryCode}
+                  onDialCodeChange={(v) => {
+                    setValues((s) => ({ ...s, whatsappCountryCode: v.trim() }));
+                    setSubmitError(null);
+                    setSubmitSuccess(null);
+                  }}
+                  onDialBlur={() => {
+                    setValues((s) => ({
+                      ...s,
+                      whatsappCountryCode: s.whatsappCountryCode.trim(),
+                    }));
+                  }}
+                  localNumber={values.whatsappNumber}
+                  onLocalNumberChange={(v) => {
+                    setValues((s) => ({ ...s, whatsappNumber: v }));
+                    setSubmitError(null);
+                    setSubmitSuccess(null);
+                  }}
+                  onLocalBlur={() => {
+                    setValues((s) => ({
+                      ...s,
+                      whatsappNumber: clampWhatsAppLocalInput(s.whatsappNumber),
+                    }));
+                  }}
+                  dialError={whatsappErrors.whatsappCountryCode}
+                  localError={whatsappErrors.whatsappNumber}
+                  disabled={isSaving}
+                  idPrefix="edit-wa"
+                  dialSelectId="whatsappCountryCode"
+                  localInputId="whatsappNumber"
+                />
+                <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                  <input
+                    type="radio"
+                    name={MASTER_QR_GROUP_DETAIL}
+                    checked={values.masterQrType === "whatsapp"}
+                    disabled={(() => {
+                      if (!values.channels.whatsapp.enabled) return true;
+                      const waE = getWhatsAppFormErrors({
+                        enabled: true,
+                        countryDialRaw: values.whatsappCountryCode,
+                        localRaw: values.whatsappNumber,
+                      });
+                      return Boolean(waE.whatsappNumber || waE.whatsappCountryCode);
+                    })()}
+                    onChange={() => setField("masterQrType")("whatsapp")}
+                    className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+                  />
+                  <span>Set as Master QR (WhatsApp)</span>
+                </label>
+              </div>
+            )}
+            {!isEditing ? (
+              <CallChannelReadOnly
+                enabled={values.callEnabled}
+                dialCode={values.callCountryCode}
+                localNumber={values.callNumber}
+                labels={callChannelReadOnlyLabelsEn}
+              />
+            ) : (
+              <CallChannelFields
+                enabled={values.callEnabled}
+                onEnabledChange={(v) => setField("callEnabled")(v)}
+                dialCode={values.callCountryCode}
+                onDialCodeChange={(v) => {
+                  setValues((s) => ({ ...s, callCountryCode: v.trim() }));
+                  setSubmitError(null);
+                  setSubmitSuccess(null);
+                }}
+                onDialBlur={() => {
+                  setValues((s) => ({
+                    ...s,
+                    callCountryCode: s.callCountryCode.trim(),
+                  }));
+                }}
+                localNumber={values.callNumber}
+                onLocalNumberChange={(v) => {
+                  setValues((s) => ({ ...s, callNumber: v }));
+                  setSubmitError(null);
+                  setSubmitSuccess(null);
+                }}
+                onLocalBlur={() => {
+                  setValues((s) => ({
+                    ...s,
+                    callNumber: clampCallLocalInput(s.callNumber),
+                  }));
+                }}
+                dialError={callErrors.callCountryCode}
+                localError={callErrors.callNumber}
+                disabled={isSaving}
+                idPrefix="edit-call"
+                dialSelectId="callCountryCode"
+                localInputId="callNumber"
+                labels={callChannelFieldLabelsEn}
+              />
+            )}
             <ChannelEditor
               label="Facebook"
               channel={values.channels.facebook}
               onToggle={setChannel("facebook", "enabled")}
               onUrl={setChannel("facebook", "url")}
               disabled={!isEditing}
+              masterSelect={channelMasterSelect(
+                isEditing,
+                (t) => setField("masterQrType")(t),
+                "facebook",
+                values.masterQrType,
+                values.channels.facebook.enabled === true &&
+                  isSafeHttpUrl(values.channels.facebook.url.trim()),
+              )}
             />
             <ChannelEditor
               label="Website"
@@ -945,6 +2043,14 @@ export function BusinessDetailEditor({
               onToggle={setChannel("website", "enabled")}
               onUrl={setChannel("website", "url")}
               disabled={!isEditing}
+              masterSelect={channelMasterSelect(
+                isEditing,
+                (t) => setField("masterQrType")(t),
+                "website",
+                values.masterQrType,
+                values.channels.website.enabled === true &&
+                  isSafeHttpUrl(values.channels.website.url.trim()),
+              )}
             />
             <ChannelEditor
               label="X (Twitter)"
@@ -952,6 +2058,14 @@ export function BusinessDetailEditor({
               onToggle={setChannel("x", "enabled")}
               onUrl={setChannel("x", "url")}
               disabled={!isEditing}
+              masterSelect={channelMasterSelect(
+                isEditing,
+                (t) => setField("masterQrType")(t),
+                "twitter",
+                values.masterQrType,
+                values.channels.x.enabled === true &&
+                  isSafeHttpUrl(values.channels.x.url.trim()),
+              )}
             />
           </div>
         </FormSection>
@@ -981,7 +2095,7 @@ export function BusinessDetailEditor({
               <FileUploadField
                 id="editBusinessResources"
                 label="Replace digital resource"
-                accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+                accept={BUSINESS_IMAGE_ACCEPT}
                 maxFiles={1}
                 fileNames={resourceNames}
                 previewUrls={resourcePreviewUrls}
@@ -1051,12 +2165,20 @@ function ChannelEditor({
   onToggle,
   onUrl,
   disabled,
+  masterSelect,
 }: {
   label: string;
   channel: Channel;
   onToggle: (next: boolean) => void;
   onUrl: (next: string) => void;
   disabled: boolean;
+  masterSelect?: {
+    groupName: string;
+    value: MasterQrType;
+    current: MasterQrType;
+    onSelect: (t: MasterQrType) => void;
+    disabled?: boolean;
+  };
 }) {
   return (
     <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
@@ -1077,6 +2199,23 @@ function ChannelEditor({
         onChange={onToggle}
         disabled={disabled}
       />
+      {masterSelect ? (
+        <label
+          className={`flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 ${
+            masterSelect.disabled ? "cursor-default" : "cursor-pointer"
+          }`}
+        >
+          <input
+            type="radio"
+            name={masterSelect.groupName}
+            checked={masterSelect.current === masterSelect.value}
+            disabled={Boolean(masterSelect.disabled)}
+            onChange={() => masterSelect.onSelect(masterSelect.value)}
+            className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+          />
+          <span>Set as Master QR</span>
+        </label>
+      ) : null}
     </div>
   );
 }
@@ -1203,6 +2342,19 @@ function ColorPreviewPlate({ title, color }: { title: string; color: string }) {
   );
 }
 
+function whatsappQrIfEnabled(v: DetailValues): { label: string; value: string } | null {
+  if (!v.channels.whatsapp.enabled) return null;
+  const resolved = resolveWhatsAppHttpsUrl({
+    countryCode: v.whatsappCountryCode,
+    localNumber: v.whatsappNumber,
+    legacyChannelUrl: v.channels.whatsapp.url,
+    channelEnabled: v.channels.whatsapp.enabled,
+  });
+  const u = resolved.trim();
+  if (!u || !isSafeHttpUrl(u)) return null;
+  return { label: "WhatsApp", value: u };
+}
+
 function channelQrIfEnabled(
   label: string,
   channel: { enabled: boolean; url: string },
@@ -1213,10 +2365,19 @@ function channelQrIfEnabled(
   return { label, value: u };
 }
 
-function QrLinksCard({ values }: { values: DetailValues }) {
+function QrLinksCard({
+  values,
+  masterTrackUrl,
+}: {
+  values: DetailValues;
+  masterTrackUrl: string;
+}) {
   const canShow = values.status === "active";
   const brandLabel = values.brandName || values.name || "business";
-  const links: { label: string; value: string }[] = [];
+  const links: { label: string; value: string; isMaster?: boolean }[] = [];
+  if (canShow && masterTrackUrl) {
+    links.push({ label: "Master", value: masterTrackUrl, isMaster: true });
+  }
   const g = values.googleUrl?.trim() ?? "";
   if (g && isSafeHttpUrl(g)) {
     links.push({ label: "Google", value: g });
@@ -1224,7 +2385,7 @@ function QrLinksCard({ values }: { values: DetailValues }) {
   for (const item of [
     channelQrIfEnabled("Instagram", values.channels.instagram),
     channelQrIfEnabled("Facebook", values.channels.facebook),
-    channelQrIfEnabled("WhatsApp", values.channels.whatsapp),
+    whatsappQrIfEnabled(values),
     channelQrIfEnabled("Website", values.channels.website),
     channelQrIfEnabled("X", values.channels.x),
   ]) {
@@ -1251,22 +2412,31 @@ function QrLinksCard({ values }: { values: DetailValues }) {
       ) : (
         <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {links.map((item) => {
-            const qrType = adminQrLabelToScanType(item.label);
+            const qrType = item.isMaster ? null : adminQrLabelToScanType(item.label);
             const qrValue =
-              canShow && values.id && qrType
-                ? buildTrackedScanOutUrl(values.id, qrType, item.value)
-                : item.value;
+              item.isMaster
+                ? item.value
+                : canShow && values.id && qrType
+                  ? buildTrackedScanOutUrl(values.id, qrType, item.value)
+                  : item.value;
             return (
             <div
               key={item.label}
               className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-950"
             >
-              <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{item.label}</p>
+              <div className="flex flex-wrap items-center gap-2">
+                <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{item.label}</p>
+                {item.isMaster ? (
+                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-200">
+                    Master
+                  </span>
+                ) : null}
+              </div>
               <div className="mt-2 flex justify-center">
                 <BrandedQrTile
                   value={qrValue}
                   brandLabel={brandLabel}
-                  qrType={item.label}
+                  qrType={item.isMaster ? "Master" : item.label}
                   logoUrl={values.logoUrl.trim() ? values.logoUrl : null}
                   size={130}
                 />
@@ -1310,17 +2480,27 @@ function QrCodeCard({
   value,
   brandLabel,
   logoUrl,
+  masterLabel,
 }: {
   value: string;
   brandLabel: string;
   logoUrl: string | null;
+  masterLabel: string;
 }) {
   return (
     <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80 sm:p-5">
-      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-        QR Code
-      </p>
+      <div className="flex flex-wrap items-center gap-2">
+        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
+          Master QR
+        </p>
+        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-200">
+          Master · {masterLabel}
+        </span>
+      </div>
       <div className="mt-4 flex flex-col items-center justify-center gap-4">
+        <p className="text-center text-xs text-zinc-600 dark:text-zinc-400">
+          Scans use your tracked link and open the selected channel ({masterLabel}).
+        </p>
         <BrandedQrTile value={value} brandLabel={brandLabel} qrType="master" logoUrl={logoUrl} size={200} />
       </div>
     </div>
@@ -1365,6 +2545,20 @@ type PatchPayload = {
   banner_urls: string[];
   resource_urls: string[];
   logo_url?: string | null;
+  identity_type: string | null;
+  identity_number: string | null;
+  identity_proof_urls: string[];
+  client_photo_url: string | null;
+  whatsapp_country_code: string;
+  whatsapp_number: string;
+  call_enabled: boolean;
+  call_country_code: string;
+  call_number: string | null;
+  master_qr_type: MasterQrType;
+  ai_enabled: boolean;
+  ai_review_language: string;
+  ai_daily_limit: number;
+  ai_suggestions_count: number | null;
 };
 
 function toPatchPayload(v: DetailValues): PatchPayload {
@@ -1372,6 +2566,11 @@ function toPatchPayload(v: DetailValues): PatchPayload {
     .split(/\r?\n|,/)
     .map((item) => item.trim())
     .filter((item) => item.length > 0);
+  const callFin = finalizeCallForPersist(
+    v.callEnabled,
+    normalizeDialCode(v.callCountryCode || DEFAULT_DIAL_CODE),
+    v.callNumber,
+  );
   return {
     name: v.name,
     email: v.email,
@@ -1386,14 +2585,52 @@ function toPatchPayload(v: DetailValues): PatchPayload {
     threshold: Number(v.threshold),
     direct_redirect: v.directRedirect,
     allow_low_rating_redirect: v.allowLowRatingRedirect,
+    whatsapp_country_code: normalizeDialCode(v.whatsappCountryCode || DEFAULT_DIAL_CODE),
+    whatsapp_number: clampWhatsAppLocalInput(v.whatsappNumber),
+    call_enabled: callFin.call_enabled,
+    call_country_code: callFin.call_country_code,
+    call_number: callFin.call_number,
     channels: {
       ...v.channels,
       spin_enabled: v.spinEnabled,
       scratch_enabled: v.scratchEnabled,
       reward_config: rewardConfig,
+      whatsapp: {
+        ...v.channels.whatsapp,
+        url: v.channels.whatsapp.enabled
+          ? (buildWhatsAppWaMeUrl(
+              normalizeDialCode(v.whatsappCountryCode || DEFAULT_DIAL_CODE),
+              sanitizePhoneLocalInput(v.whatsappNumber),
+            ) ?? "")
+          : "",
+      },
     },
     banner_urls: v.banners,
     resource_urls: v.resources,
+    ...(() => {
+      const fin = finalizeIdentityForDb(v.identityType, v.identityNumber);
+      return {
+        identity_type: fin.identity_type,
+        identity_number: fin.identity_number,
+      };
+    })(),
+    identity_proof_urls: [...v.identityProofUrls],
+    client_photo_url: v.clientPhotoUrl.trim() ? v.clientPhotoUrl.trim() : null,
+    master_qr_type: v.masterQrType,
+    ai_enabled: v.aiEnabled,
+    ai_review_language: v.aiReviewLanguage,
+    ai_daily_limit:
+      Number.isFinite(Number.parseInt(v.aiDailyLimit, 10)) &&
+      Number.parseInt(v.aiDailyLimit, 10) >= 1
+        ? Math.min(50_000, Number.parseInt(v.aiDailyLimit, 10))
+        : 50,
+    ai_suggestions_count:
+      v.aiSuggestionsCount.trim() === ""
+        ? null
+        : Math.min(
+            20,
+            Math.max(1, Number.parseInt(v.aiSuggestionsCount.trim(), 10) || 1),
+          ),
   };
 }
 
@@ -1411,7 +2648,19 @@ function isPatchPayloadEqual(a: PatchPayload, b: PatchPayload): boolean {
     a.google_url !== b.google_url ||
     a.threshold !== b.threshold ||
     a.direct_redirect !== b.direct_redirect ||
-    a.allow_low_rating_redirect !== b.allow_low_rating_redirect
+    a.allow_low_rating_redirect !== b.allow_low_rating_redirect ||
+    a.whatsapp_country_code !== b.whatsapp_country_code ||
+    a.whatsapp_number !== b.whatsapp_number ||
+    a.call_enabled !== b.call_enabled ||
+    a.call_country_code !== b.call_country_code ||
+    a.call_number !== b.call_number ||
+    a.master_qr_type !== b.master_qr_type ||
+    a.ai_enabled !== b.ai_enabled ||
+    a.ai_review_language !== b.ai_review_language ||
+    a.ai_daily_limit !== b.ai_daily_limit ||
+    a.ai_suggestions_count !== b.ai_suggestions_count ||
+    a.identity_type !== b.identity_type ||
+    a.identity_number !== b.identity_number
   ) {
     return false;
   }
@@ -1422,6 +2671,12 @@ function isPatchPayloadEqual(a: PatchPayload, b: PatchPayload): boolean {
     return false;
   }
   if (JSON.stringify(a.resource_urls) !== JSON.stringify(b.resource_urls)) {
+    return false;
+  }
+  if (JSON.stringify(a.identity_proof_urls) !== JSON.stringify(b.identity_proof_urls)) {
+    return false;
+  }
+  if (a.client_photo_url !== b.client_photo_url) {
     return false;
   }
   return true;
@@ -1450,6 +2705,21 @@ function buildPatchPayload(
   if (cur.allow_low_rating_redirect !== base.allow_low_rating_redirect) {
     patch.allow_low_rating_redirect = cur.allow_low_rating_redirect;
   }
+  if (cur.whatsapp_country_code !== base.whatsapp_country_code) {
+    patch.whatsapp_country_code = cur.whatsapp_country_code;
+  }
+  if (cur.whatsapp_number !== base.whatsapp_number) {
+    patch.whatsapp_number = cur.whatsapp_number;
+  }
+  if (cur.call_enabled !== base.call_enabled) {
+    patch.call_enabled = cur.call_enabled;
+  }
+  if (cur.call_country_code !== base.call_country_code) {
+    patch.call_country_code = cur.call_country_code;
+  }
+  if (cur.call_number !== base.call_number) {
+    patch.call_number = cur.call_number;
+  }
   if (JSON.stringify(cur.channels) !== JSON.stringify(base.channels)) {
     patch.channels = cur.channels;
   }
@@ -1459,13 +2729,36 @@ function buildPatchPayload(
   if (JSON.stringify(cur.resource_urls) !== JSON.stringify(base.resource_urls)) {
     patch.resource_urls = cur.resource_urls;
   }
+  const identityDirty =
+    cur.identity_type !== base.identity_type || cur.identity_number !== base.identity_number;
+  if (identityDirty) {
+    patch.identity_type = cur.identity_type;
+    patch.identity_number = cur.identity_number;
+  }
+  if (JSON.stringify(cur.identity_proof_urls) !== JSON.stringify(base.identity_proof_urls)) {
+    patch.identity_proof_urls = cur.identity_proof_urls;
+  }
+  if (cur.client_photo_url !== base.client_photo_url) {
+    patch.client_photo_url = cur.client_photo_url;
+  }
+  if (cur.master_qr_type !== base.master_qr_type) {
+    patch.master_qr_type = cur.master_qr_type;
+  }
+  if (cur.ai_enabled !== base.ai_enabled) patch.ai_enabled = cur.ai_enabled;
+  if (cur.ai_review_language !== base.ai_review_language) {
+    patch.ai_review_language = cur.ai_review_language;
+  }
+  if (cur.ai_daily_limit !== base.ai_daily_limit) patch.ai_daily_limit = cur.ai_daily_limit;
+  if (cur.ai_suggestions_count !== base.ai_suggestions_count) {
+    patch.ai_suggestions_count = cur.ai_suggestions_count;
+  }
 
   return patch;
 }
 
 async function uploadMediaFiles(input: {
   files: File[];
-  kind: "logo" | "banner" | "resource";
+  kind: "logo" | "banner" | "resource" | "identity_proof" | "client_photo";
   businessSlug: string;
 }): Promise<string[]> {
   if (input.files.length === 0) return [];
@@ -1500,11 +2793,3 @@ async function uploadMediaFiles(input: {
   );
 }
 
-async function removeMediaFiles(urls: string[]): Promise<void> {
-  if (urls.length === 0) return;
-  await fetch("/api/upload/media", {
-    method: "DELETE",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ urls }),
-  });
-}

@@ -51,6 +51,8 @@ export function reviewSourceLabelToScanType(label: string): ScanQrType {
 export function displayQrTypeLabel(qrType: string | null | undefined): string {
   if (!qrType) return "Legacy";
   switch (qrType) {
+    case "master":
+      return "Master";
     case "x":
       return "X (Twitter)";
     case "resource":

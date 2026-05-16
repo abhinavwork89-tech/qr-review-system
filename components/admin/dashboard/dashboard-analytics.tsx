@@ -6,10 +6,23 @@ import {
   MessageSquareText,
   Star,
   Store,
+  UserCheck,
+  UserX,
 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { ChartCard } from "@/components/admin/dashboard/chart-card";
+import {
+  LazyDashboardAiSection,
+  LazyDashboardSentimentChart,
+  LazyDashboardTrendChart,
+} from "@/components/admin/dashboard/dashboard-charts-lazy";
+import type { TrendGranularity } from "@/components/admin/dashboard/dashboard-trend-chart";
 import { StatsCard } from "@/components/admin/dashboard/stats-card";
+import type {
+  DashboardAiAnalytics,
+  ReviewSentimentCounts,
+  SubscriptionCounts,
+} from "@/lib/admin/analytics-extensions";
 import { displayQrTypeLabel } from "@/lib/scan/qr-types";
 
 type RangeDays = 1 | 7 | 30;
@@ -46,6 +59,11 @@ type AnalyticsJson = {
     scans: number;
     reviews: number;
   }>;
+  trendGranularity?: TrendGranularity;
+  trendSeries?: unknown;
+  sentiment?: ReviewSentimentCounts;
+  subscriptions?: SubscriptionCounts;
+  ai?: DashboardAiAnalytics | null;
 };
 
 const RANGE_OPTIONS: { days: RangeDays; label: string }[] = [
@@ -61,6 +79,10 @@ function formatNumber(value: number): string {
 function formatPercent(value: number): string {
   if (!Number.isFinite(value)) return "0.00";
   return value.toFixed(2);
+}
+
+function normalizeTrendGranularity(raw: unknown): TrendGranularity {
+  return raw === "hour" ? "hour" : "day";
 }
 
 function formatShortDate(iso: string): string {
@@ -87,7 +109,6 @@ export function DashboardAnalytics() {
 
     const run = async () => {
       setLoading(true);
-      setData(null);
       setError(null);
       try {
         const res = await fetch(`/api/admin/analytics?days=${days}`, {
@@ -122,10 +143,10 @@ export function DashboardAnalytics() {
         }
         setData(parsed);
       } catch (err) {
-        if (!active) return;
         if (err instanceof DOMException && err.name === "AbortError") {
           return;
         }
+        if (!active) return;
         setData(null);
         setError("Network error. Try again.");
       } finally {
@@ -152,7 +173,7 @@ export function DashboardAnalytics() {
     return Object.entries(data.scansByQrType)
       .map(([key, count]) => ({ key, count }))
       .sort((a, b) => b.count - a.count || a.key.localeCompare(b.key));
-  }, [data?.scansByQrType]);
+  }, [data]);
 
   const maxQr = useMemo(
     () => qrRows.reduce((m, r) => Math.max(m, r.count), 0),
@@ -164,21 +185,21 @@ export function DashboardAnalytics() {
         {
           title: "Total Businesses",
           value: formatNumber(data.totalBusinesses),
-          growth: "0%",
+          growth: "—",
           growthCaption: `Non-deleted businesses · ${rangeLabel}`,
           icon: Building2,
         },
         {
           title: "Total Scans",
           value: formatNumber(data.totalScans),
-          growth: "0%",
+          growth: "—",
           growthCaption: rangeLabel,
           icon: Store,
         },
         {
           title: "Total Reviews",
           value: formatNumber(data.totalReviews),
-          growth: "0%",
+          growth: "—",
           growthCaption: rangeLabel,
           icon: MessageSquareText,
         },
@@ -186,14 +207,14 @@ export function DashboardAnalytics() {
           title: "Avg. rating",
           value:
             data.averageRating != null ? formatPercent(data.averageRating) : "—",
-          growth: "0%",
+          growth: "—",
           growthCaption: rangeLabel,
           icon: Star,
         },
         {
           title: "Conversion rate",
           value: `${formatPercent(data.conversionRate)}%`,
-          growth: "0%",
+          growth: "—",
           growthCaption: "Reviews ÷ scans in this period",
           icon: CircleDollarSign,
         },
@@ -201,7 +222,14 @@ export function DashboardAnalytics() {
     : [];
 
   const businessRows = data?.businessStats ?? [];
-  const HAS_CHART_DATA = businessRows.length > 0;
+  const hasBusinessStatsRows = businessRows.length > 0;
+
+  const trendGranularity = useMemo(
+    () => normalizeTrendGranularity(data?.trendGranularity),
+    [data?.trendGranularity],
+  );
+
+  const trendCardReady = !error && (loading || data != null);
 
   return (
     <div className="space-y-6">
@@ -236,7 +264,7 @@ export function DashboardAnalytics() {
         </div>
       ) : null}
 
-      {loading ? (
+      {loading && !data ? (
         <div className="grid grid-cols-2 gap-4 lg:grid-cols-3">
           {Array.from({ length: 5 }).map((_, i) => (
             <div
@@ -263,6 +291,39 @@ export function DashboardAnalytics() {
           No analytics data
         </div>
       )}
+
+      {data?.subscriptions ? (
+        <div className="grid grid-cols-2 gap-4 lg:max-w-xl">
+          <StatsCard
+            title="Active subscriptions"
+            value={formatNumber(data.subscriptions.active)}
+            growth="—"
+            growthCaption="Non-deleted · status active"
+            icon={UserCheck}
+          />
+          <StatsCard
+            title="Inactive subscriptions"
+            value={formatNumber(data.subscriptions.inactive)}
+            growth="—"
+            growthCaption="Non-deleted · status inactive"
+            icon={UserX}
+          />
+        </div>
+      ) : null}
+
+      <LazyDashboardAiSection ai={data?.ai} rangeLabel={rangeLabel} loading={loading} />
+
+      <ChartCard
+        title="Review sentiment"
+        subtitle={`Positive 4–5★ · Neutral 3★ · Negative 1–2★ · ${rangeLabel}`}
+        hasData={!loading && (data?.sentiment?.total ?? 0) > 0}
+      >
+        {loading && !data?.sentiment ? (
+          <p className="py-8 text-center text-sm text-zinc-500">Loading…</p>
+        ) : data?.sentiment ? (
+          <LazyDashboardSentimentChart sentiment={data.sentiment} rangeLabel={rangeLabel} />
+        ) : null}
+      </ChartCard>
 
       <div className="grid gap-4 xl:grid-cols-3">
         <div className="xl:col-span-2 space-y-4">
@@ -365,7 +426,7 @@ export function DashboardAnalytics() {
         <ChartCard
           title="Business Types"
           subtitle="Per business scan and review totals (period)"
-          hasData={HAS_CHART_DATA}
+          hasData={hasBusinessStatsRows}
         >
           <div className="h-64 overflow-auto rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-3 dark:border-zinc-800 dark:bg-zinc-950/40">
             <div className="space-y-2">
@@ -391,46 +452,20 @@ export function DashboardAnalytics() {
       </div>
 
       <ChartCard
-        title="Trend"
-        subtitle="Placeholder chart (numeric data is scoped above)"
-        hasData={HAS_CHART_DATA}
+        title="Activity trend"
+        subtitle={`QR scans vs reviews from scan_logs & reviews · UTC · ${rangeLabel}${
+          trendGranularity === "hour"
+            ? " · hourly buckets"
+            : " · daily buckets"
+        }`}
+        hasData={trendCardReady}
       >
-        <div className="h-64 rounded-xl border border-zinc-200/80 bg-gradient-to-b from-indigo-50/40 to-white p-4 dark:border-zinc-800 dark:from-zinc-900 dark:to-zinc-900">
-          <div className="relative h-full w-full">
-            <div className="absolute inset-0 grid grid-rows-4 gap-4">
-              {[0, 1, 2, 3].map((row) => (
-                <div
-                  key={row}
-                  className="border-b border-dashed border-zinc-200 dark:border-zinc-800"
-                />
-              ))}
-            </div>
-            <svg
-              viewBox="0 0 400 160"
-              className="relative z-10 h-full w-full"
-              preserveAspectRatio="none"
-              aria-label="Line chart placeholder"
-            >
-              <defs>
-                <linearGradient id="lineFillDash" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="rgb(99 102 241 / 0.25)" />
-                  <stop offset="100%" stopColor="rgb(99 102 241 / 0.02)" />
-                </linearGradient>
-              </defs>
-              <path
-                d="M0,122 C40,118 55,94 92,98 C120,101 150,126 180,114 C214,100 236,50 274,58 C304,64 332,93 358,88 C376,84 388,64 400,56 L400,160 L0,160 Z"
-                fill="url(#lineFillDash)"
-              />
-              <path
-                d="M0,122 C40,118 55,94 92,98 C120,101 150,126 180,114 C214,100 236,50 274,58 C304,64 332,93 358,88 C376,84 388,64 400,56"
-                fill="none"
-                stroke="rgb(79 70 229)"
-                strokeWidth="3"
-                strokeLinecap="round"
-              />
-            </svg>
-          </div>
-        </div>
+        <LazyDashboardTrendChart
+          granularity={trendGranularity}
+          series={data?.trendSeries}
+          loading={loading && !data?.trendSeries}
+          rangeLabel={rangeLabel}
+        />
       </ChartCard>
     </div>
   );

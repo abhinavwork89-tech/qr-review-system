@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { getPreferredPublicUrl, isSafeHttpUrl } from "@/lib/review/business-config";
 import type { BusinessChannels } from "@/lib/types/business";
+import { useReviewT } from "@/components/review/review-i18n-provider";
+import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
 
 type Props = {
   googleReviewUrl: string;
@@ -23,6 +25,7 @@ export function ReviewDelayedModal({
   delayMs = 10_000,
   targetId = "review-flow",
 }: Props) {
+  const t = useReviewT();
   const [open, setOpen] = useState(false);
   const shownOnceRef = useRef(false);
   const sessionKey = useMemo(() => {
@@ -30,6 +33,8 @@ export function ReviewDelayedModal({
     const g = googleReviewUrl.trim().toLowerCase() || "no-google";
     return `delayed-review-once:${slugPart}:${g}`;
   }, [googleReviewUrl, pageSlug]);
+
+  useBodyScrollLock(open);
 
   const shouldTrigger = useMemo(() => {
     if (directRedirect) return false;
@@ -63,9 +68,11 @@ export function ReviewDelayedModal({
   }, [delayMs, sessionKey, shouldTrigger]);
 
   useEffect(() => {
-    if (!open && document.body.dataset.reviewModalOpen === "1") {
+    if (!open) return;
+    document.body.dataset.reviewModalOpen = "1";
+    return () => {
       delete document.body.dataset.reviewModalOpen;
-    }
+    };
   }, [open]);
 
   if (!open) return null;
@@ -79,14 +86,14 @@ export function ReviewDelayedModal({
       onClick={() => setOpen(false)}
     >
       <div
-        className="w-full max-w-sm rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] p-5 shadow-xl"
+        className="w-full max-w-sm overscroll-contain rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] p-5 shadow-xl"
         onClick={(e) => e.stopPropagation()}
       >
         <p
           id="delayed-review-title"
           className="text-base font-semibold text-[var(--review-fg)]"
         >
-          Would you like to rate our service?
+          {t("delayed.title")}
         </p>
         <div className="mt-5 flex items-center justify-end gap-2">
           <button
@@ -94,7 +101,7 @@ export function ReviewDelayedModal({
             onClick={() => setOpen(false)}
             className="inline-flex items-center justify-center rounded-lg border border-[color-mix(in_srgb,var(--review-fg)_16%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] px-3.5 py-2 text-sm font-medium text-[var(--review-fg)] shadow-sm transition hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-fg))]"
           >
-            No
+            {t("delayed.no")}
           </button>
           <button
             type="button"
@@ -107,7 +114,7 @@ export function ReviewDelayedModal({
             }}
             className="inline-flex items-center justify-center rounded-lg bg-[var(--review-primary)] px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-110"
           >
-            Yes
+            {t("delayed.yes")}
           </button>
         </div>
       </div>

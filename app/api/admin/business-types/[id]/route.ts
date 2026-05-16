@@ -8,6 +8,7 @@ import { listBusinessTypesWithUsage } from "@/lib/data/business-types-admin";
 import { requireAdminSession } from "@/lib/require-admin-session";
 import { normalizeBusinessTypeSlug } from "@/lib/business/business-type-slug";
 import { isUuidRouteParam } from "@/lib/validation/uuid-param";
+import { sanitizePlainText } from "@/lib/security/input-sanitize";
 
 type RouteCtx = { params: Promise<{ id: string }> };
 
@@ -87,10 +88,11 @@ export async function PATCH(request: Request, ctx: RouteCtx) {
 
   const nextSlug = slug ?? oldSlug;
   const nextName =
-    name ??
-    (typeof (existing as Record<string, unknown>).name === "string"
-      ? String((existing as Record<string, unknown>).name)
-      : "");
+    name !== undefined
+      ? sanitizePlainText(name, 120)
+      : typeof (existing as Record<string, unknown>).name === "string"
+        ? String((existing as Record<string, unknown>).name)
+        : "";
 
   if (slug !== undefined && slug !== oldKey) {
     const { data: clash } = await supabase

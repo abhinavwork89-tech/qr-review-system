@@ -32,6 +32,12 @@ export function GlobalPageLoader() {
         return await originalFetch(...args);
       } finally {
         inFlightRef.current = Math.max(0, inFlightRef.current - 1);
+        // Submit / click can set navPending expecting a route change. If no navigation
+        // happens (e.g. login error on same URL), pathname never updates — clear pending
+        // once all wrapped fetches finish so the overlay cannot stick forever.
+        if (inFlightRef.current === 0) {
+          navPendingRef.current = false;
+        }
         sync();
       }
     }) as typeof window.fetch;
@@ -72,18 +78,11 @@ export function GlobalPageLoader() {
       sync();
     };
 
-    const onSubmit = () => {
-      navPendingRef.current = true;
-      sync();
-    };
-
     document.addEventListener("click", onDocumentClick, true);
-    document.addEventListener("submit", onSubmit, true);
 
     return () => {
       window.fetch = originalFetch;
       document.removeEventListener("click", onDocumentClick, true);
-      document.removeEventListener("submit", onSubmit, true);
     };
   }, []);
 

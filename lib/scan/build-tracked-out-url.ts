@@ -33,7 +33,9 @@ export function buildTrackedScanOutUrl(
   businessId: string,
   qrType: ScanQrType,
   destinationUrl: string,
+  /** When set (e.g. from `getServerRequestPublicOrigin`), builds same-host URLs for redirects. */
+  originOverride?: string | null,
 ): string {
-  const origin = scanTrackingPublicOrigin();
-  return `${origin}${buildTrackedScanOutPath(businessId, qrType, destinationUrl)}`;
+  const raw = (originOverride?.trim() || scanTrackingPublicOrigin()).replace(/\/+$/, "");
+  return `${raw}${buildTrackedScanOutPath(businessId, qrType, destinationUrl)}`;
 }

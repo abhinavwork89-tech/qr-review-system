@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useLayoutEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
 import {
   applyAdminTheme,
@@ -14,11 +14,9 @@ function isDarkClassOnHtml(): boolean {
 }
 
 export function AdminThemeToggle() {
-  const [mode, setMode] = useState<AdminThemeMode>("light");
-
-  useLayoutEffect(() => {
-    setMode(readAdminTheme());
-  }, []);
+  const [mode, setMode] = useState<AdminThemeMode>(() =>
+    typeof window === "undefined" ? "light" : readAdminTheme(),
+  );
 
   const toggle = useCallback(() => {
     const next: AdminThemeMode = isDarkClassOnHtml() ? "light" : "dark";

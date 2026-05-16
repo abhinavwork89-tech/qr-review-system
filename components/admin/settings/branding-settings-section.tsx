@@ -4,15 +4,11 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { AppSettingsPublic } from "@/lib/data/app-settings";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
-
-function isSafeHttpUrl(value: string): boolean {
-  try {
-    const u = new URL(value.trim());
-    return u.protocol === "http:" || u.protocol === "https:";
-  } catch {
-    return false;
-  }
-}
+import {
+  normalizeSafeHttpUrl,
+  sanitizePlainText,
+} from "@/lib/security/input-sanitize";
+import { deleteMediaUrls } from "@/lib/storage/delete-media-client";
 
 async function uploadBrandingLogo(file: File): Promise<string> {
   const form = new FormData();
@@ -65,20 +61,18 @@ export function BrandingSettingsSection({ initial }: Props) {
   const [copyrightYear, setCopyrightYear] = useState(String(initial.copyrightYear));
   const [brandingLogoUrl, setBrandingLogoUrl] = useState(initial.brandingLogoUrl);
   const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [pendingPreviewUrl, setPendingPreviewUrl] = useState<string | null>(null);
+  const pendingPreviewUrl = useMemo(
+    () => (pendingFile ? URL.createObjectURL(pendingFile) : null),
+    [pendingFile],
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
   useEffect(() => {
-    if (!pendingFile) {
-      setPendingPreviewUrl(null);
-      return;
-    }
-    const url = URL.createObjectURL(pendingFile);
-    setPendingPreviewUrl(url);
-    return () => URL.revokeObjectURL(url);
-  }, [pendingFile]);
+    if (!pendingPreviewUrl) return;
+    return () => URL.revokeObjectURL(pendingPreviewUrl);
+  }, [pendingPreviewUrl]);
 
   const previewYear = Number.parseInt(copyrightYear, 10);
   const preview = useMemo(
@@ -105,7 +99,8 @@ export function BrandingSettingsSection({ initial }: Props) {
     setSuccess(false);
 
     const powered = poweredByUrl.trim();
-    if (!powered || !isSafeHttpUrl(powered)) {
+    const normalizedPowered = normalizeSafeHttpUrl(powered);
+    if (!normalizedPowered) {
       setError("Powered-by URL must be a valid http(s) link.");
       return;
     }
@@ -122,6 +117,7 @@ export function BrandingSettingsSection({ initial }: Props) {
     }
 
     setSaving(true);
+    const previousLogoUrl = brandingLogoUrl;
     try {
       let logoUrl: string | null = brandingLogoUrl;
       if (pendingFile) {
@@ -130,12 +126,14 @@ export function BrandingSettingsSection({ initial }: Props) {
         setPendingFile(null);
       }
 
+      const safeCopyright = sanitizePlainText(copyrightText, 500);
+
       const res = await fetch("/api/admin/app-settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          poweredByUrl: powered,
-          copyrightText,
+          poweredByUrl: normalizedPowered,
+          copyrightText: safeCopyright,
           copyrightYear: year,
           brandingLogoUrl: logoUrl,
         }),
@@ -143,6 +141,9 @@ export function BrandingSettingsSection({ initial }: Props) {
 
       const body: unknown = await res.json().catch(() => null);
       if (!res.ok) {
+        if (logoUrl && logoUrl !== previousLogoUrl) {
+          void deleteMediaUrls([logoUrl], { businessSlug: "app" });
+        }
         const msg =
           typeof body === "object" &&
           body !== null &&
@@ -152,6 +153,10 @@ export function BrandingSettingsSection({ initial }: Props) {
             : "Save failed";
         setError(msg);
         return;
+      }
+
+      if (logoUrl && previousLogoUrl && previousLogoUrl !== logoUrl) {
+        void deleteMediaUrls([previousLogoUrl], { businessSlug: "app" });
       }
 
       setSuccess(true);

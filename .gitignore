@@ -33,10 +33,18 @@ yarn-error.log*
 # env files
 .env
 .env*.local
-!.env.example
+.env*.prod
+.env*.example
+.env.example
 
-# vercel
+# Environment files
+.env
+.env.* 
+
+# Optional
 .vercel
+.next
+node_modules
 
 # typescript
 *.tsbuildinfo

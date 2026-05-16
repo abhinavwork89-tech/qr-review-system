@@ -1,18 +1,66 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
 import { ChannelRow } from "@/components/admin/add-business/channel-row";
 import { FileUploadField } from "@/components/admin/add-business/file-upload-field";
 import { FormField } from "@/components/admin/add-business/form-field";
 import { FormSection } from "@/components/admin/add-business/form-section";
 import { FormToggle } from "@/components/admin/add-business/form-toggle";
-import { formInputBase, formInputError } from "@/components/admin/add-business/form-styles";
-import { sanitizeMobileInput, validateAndMergeFiles } from "@/components/admin/add-business/upload-utils";
+import { formInputBase, formInputError, formSelectBase } from "@/components/admin/add-business/form-styles";
+import { validateAndMergeFiles, BUSINESS_IMAGE_ACCEPT } from "@/components/admin/add-business/upload-utils";
+import {
+  COUNTRY_DIAL_CODES,
+  joinDialAndLocal,
+  sanitizePhoneLocalInput,
+  splitPhoneNumber,
+  validateInternationalPhone,
+  normalizeDialCode,
+  DEFAULT_DIAL_CODE,
+} from "@/lib/phone/mobile";
+import {
+  normalizeSafeHttpUrl,
+  sanitizeCssToken,
+  sanitizeEmail,
+  sanitizeMobile,
+  sanitizePlainText,
+} from "@/lib/security/input-sanitize";
+import {
+  finalizeIdentityForDb,
+  formatIdentityNumberInput,
+  getIdentityDocumentErrors,
+  getIdentityFieldErrors,
+  getIdentityNumberMaxLength,
+  isAllowedIdentityTypeSlug,
+  normalizeIdentityNumberForStorage,
+  parseIdentityTypeInput,
+  type BusinessIdentityTypeSlug,
+} from "@/lib/business/identity";
+import { getWhatsAppFormErrors, clampWhatsAppLocalInput } from "@/lib/whatsapp/wa-me";
+import { WhatsAppChannelFields } from "@/components/admin/add-business/whatsapp-channel-fields";
+import {
+  CallChannelFields,
+  callChannelFieldLabelsEn,
+} from "@/components/admin/add-business/call-channel-fields";
+import {
+  CALL_FORM_ERRORS_EN,
+  getCallFormErrors,
+  clampCallLocalInput,
+  finalizeCallForPersist,
+} from "@/lib/call/call-channel";
+import {
+  computeDefaultMasterQrType,
+  validateMasterQrForPersist,
+  type MasterQrType,
+} from "@/lib/scan/master-qr";
+import { defaultSuggestionsForPlan } from "@/lib/ai/suggestions-by-plan";
+import { adminAiLabels } from "@/lib/i18n/admin-ai-labels";
 
 type Errors = Partial<Record<string, string>>;
-type Touched = Partial<Record<keyof FormValues, boolean>>;
+type Touched = Partial<
+  Record<keyof FormValues | "identityProofUpload" | "clientProfileUpload", boolean>
+>;
 
 const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const FULL_NAME_REGEX = /^[A-Za-z ]+$/;
@@ -41,56 +89,68 @@ function isSafeHttpUrl(value: string): boolean {
   }
 }
 
-function sanitizeInput(value: string): string {
-  return value
-    .replace(/<[^>]*>/g, "")
-    .replace(/[<>]/g, "")
-    .replace(/javascript:/gi, "")
-    .replace(/on\w+\s*=/gi, "")
-    .trim();
+function normalizeRewardConfigLines(text: string): string {
+  return text
+    .split(/\r?\n|,/)
+    .map((line) => sanitizePlainText(line.trim(), 500))
+    .filter((line) => line.length > 0)
+    .join("\n");
 }
 
 function normalizeForSubmit(values: FormValues): FormValues {
   return {
     ...values,
-    fullName: sanitizeInput(values.fullName),
-    email: sanitizeInput(values.email),
-    mobile: sanitizeInput(values.mobile),
-    brandName: sanitizeInput(values.brandName),
-    primaryColor: sanitizeInput(values.primaryColor),
-    secondaryColor: sanitizeInput(values.secondaryColor),
-    language: sanitizeInput(values.language),
-    businessType: sanitizeInput(values.businessType),
-    subscriptionPlan: sanitizeInput(values.subscriptionPlan),
-    googleReviewUrl: sanitizeInput(values.googleReviewUrl),
-    ratingThreshold: sanitizeInput(values.ratingThreshold),
-    rewardConfigText: sanitizeInput(values.rewardConfigText),
-    instagramUrl: sanitizeInput(values.instagramUrl),
-    whatsappUrl: sanitizeInput(values.whatsappUrl),
-    facebookUrl: sanitizeInput(values.facebookUrl),
-    websiteUrl: sanitizeInput(values.websiteUrl),
-    xUrl: sanitizeInput(values.xUrl),
+    fullName: sanitizePlainText(values.fullName, 200),
+    email: sanitizeEmail(values.email),
+    mobile: sanitizeMobile(values.mobile),
+    brandName: sanitizePlainText(values.brandName, 200),
+    primaryColor: sanitizeCssToken(values.primaryColor, 32),
+    secondaryColor: sanitizeCssToken(values.secondaryColor, 32),
+    language: sanitizeCssToken(values.language, 32),
+    businessType: sanitizeCssToken(values.businessType, 80),
+    subscriptionPlan: sanitizeCssToken(values.subscriptionPlan, 64),
+    googleReviewUrl: normalizeSafeHttpUrl(values.googleReviewUrl),
+    ratingThreshold: sanitizeCssToken(values.ratingThreshold, 8),
+    rewardConfigText: normalizeRewardConfigLines(values.rewardConfigText),
+    instagramUrl: normalizeSafeHttpUrl(values.instagramUrl),
+    facebookUrl: normalizeSafeHttpUrl(values.facebookUrl),
+    websiteUrl: normalizeSafeHttpUrl(values.websiteUrl),
+    xUrl: normalizeSafeHttpUrl(values.xUrl),
+    whatsappCountryCode: normalizeDialCode(values.whatsappCountryCode || DEFAULT_DIAL_CODE),
+    whatsappNumber: clampWhatsAppLocalInput(values.whatsappNumber),
+    callCountryCode: normalizeDialCode(values.callCountryCode || DEFAULT_DIAL_CODE),
+    callNumber: clampCallLocalInput(values.callNumber),
+    identityType: (() => {
+      const t = parseIdentityTypeInput(values.identityType);
+      return isAllowedIdentityTypeSlug(t) ? t : "";
+    })(),
+    identityNumber: (() => {
+      const t = parseIdentityTypeInput(values.identityType);
+      if (!t || !isAllowedIdentityTypeSlug(t)) return "";
+      return normalizeIdentityNumberForStorage(t as BusinessIdentityTypeSlug, values.identityNumber);
+    })(),
+    aiReviewLanguage:
+      values.aiReviewLanguage === "hi" || values.aiReviewLanguage === "hinglish"
+        ? values.aiReviewLanguage
+        : "en",
+    aiDailyLimit: (() => {
+      const d = values.aiDailyLimit.replace(/\D/g, "");
+      const n = d ? Number.parseInt(d, 10) : 50;
+      return String(Number.isFinite(n) && n >= 1 ? Math.min(50000, n) : 50);
+    })(),
+    aiSuggestionsCount: values.aiSuggestionsCount.replace(/\D/g, "").slice(0, 2),
   };
 }
 
 function validateMobile(value: string): string | null {
-  const compact = value.replace(/\s+/g, "");
-  if (!compact) return "This field is required";
-  if (!compact.startsWith("+")) return "Country code is required (e.g. +91)";
-  if (!/^\+\d+$/.test(compact)) return "Use digits only with country code";
-  const digits = compact.slice(1);
-  if (digits.length < 8 || digits.length > 15) {
-    return "Enter a valid mobile number length";
-  }
-  const countryCodeLength = digits.length > 11 ? 3 : digits.length > 10 ? 2 : 1;
-  const nationalNumberLength = digits.length - countryCodeLength;
-  if (nationalNumberLength < 6 || nationalNumberLength > 12) {
-    return "Enter a valid mobile number";
-  }
-  return null;
+  return validateInternationalPhone(value);
 }
 
-function validate(values: FormValues): Errors {
+function validate(
+  values: FormValues,
+  identityProofFileCount: number,
+  clientProfileFileCount: number,
+): Errors {
   const e: Errors = {};
   const fullName = values.fullName.trim();
   const email = values.email.trim();
@@ -120,10 +180,28 @@ function validate(values: FormValues): Errors {
     e.instagramUrl = "URL is required when this channel is enabled";
   else if (values.instagramEnabled && !isSafeHttpUrl(values.instagramUrl))
     e.instagramUrl = "Enter a valid URL";
-  if (values.whatsappEnabled && !values.whatsappUrl.trim())
-    e.whatsappUrl = "URL is required when this channel is enabled";
-  else if (values.whatsappEnabled && !isSafeHttpUrl(values.whatsappUrl))
-    e.whatsappUrl = "Enter a valid URL";
+  if (values.whatsappEnabled) {
+    const waE = getWhatsAppFormErrors({
+      enabled: true,
+      countryDialRaw: values.whatsappCountryCode,
+      localRaw: values.whatsappNumber,
+    });
+    if (waE.whatsappCountryCode) e.whatsappCountryCode = waE.whatsappCountryCode;
+    if (waE.whatsappNumber) e.whatsappNumber = waE.whatsappNumber;
+  }
+  if (values.callEnabled) {
+    const msgs = CALL_FORM_ERRORS_EN;
+    const cE = getCallFormErrors(
+      {
+        enabled: true,
+        countryDialRaw: values.callCountryCode,
+        localRaw: values.callNumber,
+      },
+      msgs,
+    );
+    if (cE.callCountryCode) e.callCountryCode = cE.callCountryCode;
+    if (cE.callNumber) e.callNumber = cE.callNumber;
+  }
   if (values.facebookEnabled && !values.facebookUrl.trim())
     e.facebookUrl = "URL is required when this channel is enabled";
   else if (values.facebookEnabled && !isSafeHttpUrl(values.facebookUrl))
@@ -137,11 +215,65 @@ function validate(values: FormValues): Errors {
   else if (values.xEnabled && !isSafeHttpUrl(values.xUrl))
     e.xUrl = "Enter a valid URL";
 
+  const idType = parseIdentityTypeInput(values.identityType) || null;
+  const idErrs = getIdentityFieldErrors(idType, values.identityNumber);
+  if (idErrs.identity_type) e.identityType = idErrs.identity_type;
+  if (idErrs.identity_number) e.identityNumber = idErrs.identity_number;
+
+  const docErrs = getIdentityDocumentErrors({
+    identityProofUrlCount: identityProofFileCount,
+    clientPhotoUrlPresent: clientProfileFileCount >= 1,
+  });
+  if (docErrs.identity_proof_urls) e.identity_proof_urls = docErrs.identity_proof_urls;
+  if (docErrs.client_photo_url) e.client_photo_url = docErrs.client_photo_url;
+
+  const masterErr = validateMasterQrForPersist({
+    ...masterBaseFromFormValues(values),
+    master_qr_type: values.masterQrType,
+  });
+  if (masterErr) e.masterQrType = masterErr;
+
+  const aiDailyParsed = Number.parseInt(values.aiDailyLimit.replace(/\D/g, ""), 10);
+  if (
+    values.aiDailyLimit.trim() &&
+    (!Number.isFinite(aiDailyParsed) || aiDailyParsed < 1 || aiDailyParsed > 50000)
+  ) {
+    e.aiDailyLimit = "Enter a daily limit from 1 to 50000";
+  }
+  if (values.aiSuggestionsCount.trim()) {
+    const s = Number.parseInt(values.aiSuggestionsCount.trim(), 10);
+    if (!Number.isInteger(s) || s < 1 || s > 20) {
+      e.aiSuggestionsCount = "Use 1–20 or leave blank for plan default";
+    }
+  }
+
   return e;
 }
 
-function validateField(values: FormValues, key: keyof FormValues): string | undefined {
-  return validate(values)[key];
+const MASTER_QR_GROUP_ADD = "masterQrAddBusiness";
+
+const AI_ADMIN = adminAiLabels();
+
+function channelsObjectForMaster(v: FormValues) {
+  return {
+    instagram: { enabled: v.instagramEnabled, url: v.instagramUrl },
+    whatsapp: { enabled: v.whatsappEnabled, url: "" },
+    facebook: { enabled: v.facebookEnabled, url: v.facebookUrl },
+    website: { enabled: v.websiteEnabled, url: v.websiteUrl },
+    x: { enabled: v.xEnabled, url: v.xUrl },
+  };
+}
+
+function masterBaseFromFormValues(v: FormValues) {
+  const google = v.googleReviewUrl.trim();
+  return {
+    google_url: google.length ? google : null,
+    channels: channelsObjectForMaster(v),
+    whatsapp_country_code: v.whatsappEnabled
+      ? normalizeDialCode(v.whatsappCountryCode || DEFAULT_DIAL_CODE)
+      : null,
+    whatsapp_number: v.whatsappEnabled ? clampWhatsAppLocalInput(v.whatsappNumber) : null,
+  };
 }
 
 type FormValues = {
@@ -163,7 +295,8 @@ type FormValues = {
   rewardConfigText: string;
   instagramUrl: string;
   instagramEnabled: boolean;
-  whatsappUrl: string;
+  whatsappCountryCode: string;
+  whatsappNumber: string;
   whatsappEnabled: boolean;
   facebookUrl: string;
   facebookEnabled: boolean;
@@ -171,6 +304,16 @@ type FormValues = {
   websiteEnabled: boolean;
   xUrl: string;
   xEnabled: boolean;
+  callCountryCode: string;
+  callNumber: string;
+  callEnabled: boolean;
+  identityType: string;
+  identityNumber: string;
+  masterQrType: MasterQrType;
+  aiEnabled: boolean;
+  aiReviewLanguage: "en" | "hi" | "hinglish";
+  aiDailyLimit: string;
+  aiSuggestionsCount: string;
 };
 
 const initialValues: FormValues = {
@@ -192,7 +335,8 @@ const initialValues: FormValues = {
   rewardConfigText: "5% OFF\n10% OFF\nBetter Luck\n₹20 OFF",
   instagramUrl: "",
   instagramEnabled: false,
-  whatsappUrl: "",
+  whatsappCountryCode: DEFAULT_DIAL_CODE,
+  whatsappNumber: "",
   whatsappEnabled: false,
   facebookUrl: "",
   facebookEnabled: false,
@@ -200,11 +344,21 @@ const initialValues: FormValues = {
   websiteEnabled: false,
   xUrl: "",
   xEnabled: false,
+  callCountryCode: DEFAULT_DIAL_CODE,
+  callNumber: "",
+  callEnabled: false,
+  identityType: "aadhaar",
+  identityNumber: "",
+  masterQrType: "google_review",
+  aiEnabled: false,
+  aiReviewLanguage: "en",
+  aiDailyLimit: "50",
+  aiSuggestionsCount: "",
 };
 
 async function uploadMediaFiles(input: {
   files: File[];
-  kind: "logo" | "banner" | "resource";
+  kind: "logo" | "banner" | "resource" | "identity_proof" | "client_photo";
   businessSlug: string;
 }): Promise<string[]> {
   if (input.files.length === 0) return [];
@@ -266,10 +420,18 @@ export function AddBusinessForm({
   const [logoPreviewUrls, setLogoPreviewUrls] = useState<string[]>([]);
   const [bannerPreviewUrls, setBannerPreviewUrls] = useState<string[]>([]);
   const [resourcePreviewUrls, setResourcePreviewUrls] = useState<string[]>([]);
+  const [identityProofNames, setIdentityProofNames] = useState<string[]>([]);
+  const [identityProofFiles, setIdentityProofFiles] = useState<File[]>([]);
+  const [identityProofPreviewUrls, setIdentityProofPreviewUrls] = useState<string[]>([]);
+  const [clientProfileNames, setClientProfileNames] = useState<string[]>([]);
+  const [clientProfileFiles, setClientProfileFiles] = useState<File[]>([]);
+  const [clientProfilePreviewUrls, setClientProfilePreviewUrls] = useState<string[]>([]);
   const [uploadErrors, setUploadErrors] = useState<{
     logo?: string;
     banner?: string;
     resource?: string;
+    identityProof?: string;
+    clientProfile?: string;
   }>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -278,18 +440,159 @@ export function AddBusinessForm({
     slug: string;
   } | null>(null);
 
+  const valuesRef = useRef(values);
+  useEffect(() => {
+    valuesRef.current = values;
+  }, [values]);
+
+  const callFieldLabels = callChannelFieldLabelsEn;
+
+  /** Real-time identity errors once user has interacted with identity fields. */
+  useEffect(() => {
+    if (!touched.identityType && !touched.identityNumber) return;
+    const norm = normalizeForSubmit(values);
+    const idType = parseIdentityTypeInput(norm.identityType) || null;
+    const idErrs = getIdentityFieldErrors(idType, norm.identityNumber);
+    queueMicrotask(() => {
+      setErrors((prev) => {
+        const next = { ...prev };
+        if (idErrs.identity_type) next.identityType = idErrs.identity_type;
+        else delete next.identityType;
+        if (idErrs.identity_number) next.identityNumber = idErrs.identity_number;
+        else delete next.identityNumber;
+        return next;
+      });
+    });
+  }, [values.identityType, values.identityNumber, touched.identityType, touched.identityNumber]);
+
+  useEffect(() => {
+    if (!touched.identityProofUpload && !touched.clientProfileUpload) return;
+    const docErrs = getIdentityDocumentErrors({
+      identityProofUrlCount: identityProofFiles.length,
+      clientPhotoUrlPresent: clientProfileFiles.length >= 1,
+    });
+    queueMicrotask(() => {
+      setErrors((prev) => {
+        const next = { ...prev };
+        if (docErrs.identity_proof_urls) next.identity_proof_urls = docErrs.identity_proof_urls;
+        else delete next.identity_proof_urls;
+        if (docErrs.client_photo_url) next.client_photo_url = docErrs.client_photo_url;
+        else delete next.client_photo_url;
+        return next;
+      });
+    });
+  }, [
+    identityProofFiles.length,
+    clientProfileFiles.length,
+    touched.identityProofUpload,
+    touched.clientProfileUpload,
+  ]);
+
+  useEffect(() => {
+    if (!values.whatsappEnabled) {
+      queueMicrotask(() => {
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next.whatsappNumber;
+          delete next.whatsappCountryCode;
+          return next;
+        });
+      });
+      return;
+    }
+    const wa = getWhatsAppFormErrors({
+      enabled: true,
+      countryDialRaw: values.whatsappCountryCode,
+      localRaw: values.whatsappNumber,
+    });
+    queueMicrotask(() => {
+      setErrors((prev) => {
+        const next = { ...prev };
+        if (wa.whatsappCountryCode) next.whatsappCountryCode = wa.whatsappCountryCode;
+        else delete next.whatsappCountryCode;
+        if (wa.whatsappNumber) next.whatsappNumber = wa.whatsappNumber;
+        else delete next.whatsappNumber;
+        return next;
+      });
+    });
+  }, [values.whatsappEnabled, values.whatsappCountryCode, values.whatsappNumber]);
+
+  useEffect(() => {
+    if (!values.callEnabled) {
+      queueMicrotask(() => {
+        setErrors((prev) => {
+          const next = { ...prev };
+          delete next.callNumber;
+          delete next.callCountryCode;
+          return next;
+        });
+      });
+      return;
+    }
+    const msgs = CALL_FORM_ERRORS_EN;
+    const ce = getCallFormErrors(
+      {
+        enabled: true,
+        countryDialRaw: values.callCountryCode,
+        localRaw: values.callNumber,
+      },
+      msgs,
+    );
+    queueMicrotask(() => {
+      setErrors((prev) => {
+        const next = { ...prev };
+        if (ce.callCountryCode) next.callCountryCode = ce.callCountryCode;
+        else delete next.callCountryCode;
+        if (ce.callNumber) next.callNumber = ce.callNumber;
+        else delete next.callNumber;
+        return next;
+      });
+    });
+  }, [values.callEnabled, values.callCountryCode, values.callNumber]);
+
+  useEffect(() => {
+    const v = valuesRef.current;
+    const base = masterBaseFromFormValues(v);
+    if (validateMasterQrForPersist({ ...base, master_qr_type: v.masterQrType }) === null) {
+      return;
+    }
+    const d = computeDefaultMasterQrType(base);
+    if (d !== v.masterQrType) {
+      setValues((s) => (s.masterQrType === d ? s : { ...s, masterQrType: d }));
+    }
+  }, [
+    values.googleReviewUrl,
+    values.instagramEnabled,
+    values.instagramUrl,
+    values.whatsappEnabled,
+    values.whatsappCountryCode,
+    values.whatsappNumber,
+    values.facebookEnabled,
+    values.facebookUrl,
+    values.websiteEnabled,
+    values.websiteUrl,
+    values.xEnabled,
+    values.xUrl,
+  ]);
+
   const validatedFieldKeys: (keyof FormValues)[] = [
     "fullName",
     "email",
     "mobile",
     "brandName",
+    "identityType",
+    "identityNumber",
     "businessType",
     "googleReviewUrl",
     "instagramUrl",
-    "whatsappUrl",
+    "whatsappCountryCode",
+    "whatsappNumber",
+    "callCountryCode",
+    "callNumber",
     "facebookUrl",
     "websiteUrl",
     "xUrl",
+    "masterQrType",
   ];
 
   const setRewardGame = (mode: "none" | "spin" | "scratch") => {
@@ -305,13 +608,56 @@ export function AddBusinessForm({
   const patch =
     <K extends keyof FormValues>(key: K) =>
     (v: FormValues[K]) => {
+      if (key === "identityType" || key === "identityNumber") {
+        setValues((s) => {
+          let nextValues: FormValues = { ...s, [key]: v };
+          if (key === "identityType") {
+            const nv = String(v);
+            if (nv !== s.identityType) nextValues = { ...nextValues, identityNumber: "" };
+            if (nv === "") nextValues = { ...nextValues, identityNumber: "" };
+          }
+          if (key === "identityNumber" && typeof v === "string") {
+            const t = parseIdentityTypeInput(nextValues.identityType);
+            if (t && isAllowedIdentityTypeSlug(t)) {
+              nextValues = {
+                ...nextValues,
+                identityNumber: formatIdentityNumberInput(t, v),
+              };
+            }
+          }
+          queueMicrotask(() => {
+            valuesRef.current = nextValues;
+            const norm = normalizeForSubmit(nextValues);
+            const idType = parseIdentityTypeInput(norm.identityType) || null;
+            const idErrs = getIdentityFieldErrors(idType, norm.identityNumber);
+            setErrors((prev) => {
+              const next = { ...prev };
+              if (idErrs.identity_type) next.identityType = idErrs.identity_type;
+              else delete next.identityType;
+              if (idErrs.identity_number) next.identityNumber = idErrs.identity_number;
+              else delete next.identityNumber;
+              return next;
+            });
+          });
+          return nextValues;
+        });
+        setTouched((prev) => ({ ...prev, [key]: true }));
+        return;
+      }
+
       setValues((s) => {
         const nextValues = { ...s, [key]: v };
         if (validatedFieldKeys.includes(key)) {
           setTouched((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
-          const fieldError = validateField(normalizeForSubmit(nextValues), key);
+          const normalized = normalizeForSubmit(nextValues);
+          const allErrs = validate(
+            normalized,
+            identityProofFiles.length,
+            clientProfileFiles.length,
+          );
           setErrors((prev) => {
             const next = { ...prev };
+            const fieldError = allErrs[key];
             if (fieldError) next[key as string] = fieldError;
             else delete next[key as string];
             return next;
@@ -322,22 +668,74 @@ export function AddBusinessForm({
     };
 
   const markTouched = (key: keyof FormValues) => {
-    if (!validatedFieldKeys.includes(key)) return;
+    if (
+      !validatedFieldKeys.includes(key) &&
+      key !== "identityType" &&
+      key !== "identityNumber"
+    ) {
+      return;
+    }
     setTouched((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
-    const fieldError = validateField(normalizeForSubmit(values), key);
+    if (key === "identityType" || key === "identityNumber") {
+      queueMicrotask(() => {
+        const v = valuesRef.current;
+        const norm = normalizeForSubmit(v);
+        const idType = parseIdentityTypeInput(norm.identityType) || null;
+        const idErrs = getIdentityFieldErrors(idType, norm.identityNumber);
+        setErrors((prev) => {
+          const next = { ...prev };
+          if (idErrs.identity_type) next.identityType = idErrs.identity_type;
+          else delete next.identityType;
+          if (idErrs.identity_number) next.identityNumber = idErrs.identity_number;
+          else delete next.identityNumber;
+          return next;
+        });
+      });
+      return;
+    }
+    const normalized = normalizeForSubmit(valuesRef.current);
+    const allErrs = validate(
+      normalized,
+      identityProofFiles.length,
+      clientProfileFiles.length,
+    );
     setErrors((prev) => {
       const next = { ...prev };
+      const fieldError = allErrs[key];
       if (fieldError) next[key as string] = fieldError;
       else delete next[key as string];
       return next;
     });
   };
 
-  const isFormValid = Object.keys(validate(normalizeForSubmit(values))).length === 0;
-  const hasUploadErrors = Boolean(uploadErrors.logo || uploadErrors.banner || uploadErrors.resource);
+  const isFormValid = useMemo(
+    () =>
+      Object.keys(
+        validate(
+          normalizeForSubmit(values),
+          identityProofFiles.length,
+          clientProfileFiles.length,
+        ),
+      ).length === 0,
+    [values, identityProofFiles.length, clientProfileFiles.length],
+  );
+  const hasUploadErrors = Boolean(
+    uploadErrors.logo ||
+      uploadErrors.banner ||
+      uploadErrors.resource ||
+      uploadErrors.identityProof ||
+      uploadErrors.clientProfile,
+  );
+  const mobileParts = useMemo(() => splitPhoneNumber(values.mobile), [values.mobile]);
+  const identityNumberMaxLen = useMemo(() => {
+    const t = parseIdentityTypeInput(values.identityType);
+    if (!t || !isAllowedIdentityTypeSlug(t)) return undefined;
+    return getIdentityNumberMaxLength(t);
+  }, [values.identityType]);
 
   const fieldClass = useCallback(
-    (key: string) => `${formInputBase} ${errors[key] ? formInputError : ""}`,
+    (key: string) =>
+      [formInputBase, errors[key] ? formInputError : null].filter(Boolean).join(" "),
     [errors],
   );
 
@@ -346,26 +744,41 @@ export function AddBusinessForm({
       logoPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
       bannerPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
       resourcePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+      identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+      clientProfilePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
     };
-  }, [bannerPreviewUrls, logoPreviewUrls, resourcePreviewUrls]);
+  }, [
+    bannerPreviewUrls,
+    logoPreviewUrls,
+    resourcePreviewUrls,
+    identityProofPreviewUrls,
+    clientProfilePreviewUrls,
+  ]);
 
   const handleSubmit = async (ev: React.FormEvent) => {
     ev.preventDefault();
     if (isSubmitting) return;
     setSubmitError(null);
     setSubmitSuccess(null);
-    if (uploadErrors.logo || uploadErrors.banner || uploadErrors.resource) {
+    if (uploadErrors.logo || uploadErrors.banner || uploadErrors.resource || uploadErrors.identityProof || uploadErrors.clientProfile) {
       setSubmitError("Please resolve upload errors before submitting.");
       return;
     }
 
-    const normalizedValues = normalizeForSubmit(values);
-    const next = validate(normalizedValues);
+    const submitSnapshot = valuesRef.current;
+    const normalizedValues = normalizeForSubmit(submitSnapshot);
+    const next = validate(
+      normalizedValues,
+      identityProofFiles.length,
+      clientProfileFiles.length,
+    );
     setTouched((prev) => {
       const allTouched: Touched = { ...prev };
       for (const key of validatedFieldKeys) {
         allTouched[key] = true;
       }
+      allTouched.identityProofUpload = true;
+      allTouched.clientProfileUpload = true;
       return allTouched;
     });
     setErrors(next);
@@ -380,7 +793,7 @@ export function AddBusinessForm({
     try {
       const mediaBase = normalizedValues.brandName || normalizedValues.fullName || "business";
 
-      const [logoUrls, bannerUrls, resourceUrls] = await Promise.all([
+      const [logoUrls, bannerUrls, resourceUrls, proofUrls, clientPhotoUrls] = await Promise.all([
         uploadMediaFiles({
           files: logoFiles.slice(0, 1),
           kind: "logo",
@@ -396,8 +809,27 @@ export function AddBusinessForm({
           kind: "resource",
           businessSlug: mediaBase,
         }),
+        uploadMediaFiles({
+          files: identityProofFiles,
+          kind: "identity_proof",
+          businessSlug: mediaBase,
+        }),
+        uploadMediaFiles({
+          files: clientProfileFiles.slice(0, 1),
+          kind: "client_photo",
+          businessSlug: mediaBase,
+        }),
       ]);
 
+      const identityFinal = finalizeIdentityForDb(
+        normalizedValues.identityType,
+        normalizedValues.identityNumber,
+      );
+      const callFin = finalizeCallForPersist(
+        normalizedValues.callEnabled,
+        normalizeDialCode(normalizedValues.callCountryCode || DEFAULT_DIAL_CODE),
+        normalizedValues.callNumber,
+      );
       const payload = {
         name: normalizedValues.fullName,
         email: normalizedValues.email,
@@ -412,6 +844,15 @@ export function AddBusinessForm({
         threshold: Number(normalizedValues.ratingThreshold),
         direct_redirect: normalizedValues.directRedirect,
         allow_low_rating_redirect: normalizedValues.allowLowRatingRedirect,
+        whatsapp_country_code: normalizedValues.whatsappEnabled
+          ? normalizeDialCode(normalizedValues.whatsappCountryCode || DEFAULT_DIAL_CODE)
+          : null,
+        whatsapp_number: normalizedValues.whatsappEnabled
+          ? clampWhatsAppLocalInput(normalizedValues.whatsappNumber)
+          : null,
+        call_enabled: callFin.call_enabled,
+        call_country_code: callFin.call_country_code,
+        call_number: callFin.call_number,
         channels: {
           spin_enabled: normalizedValues.spinEnabled,
           scratch_enabled: normalizedValues.scratchEnabled,
@@ -422,7 +863,7 @@ export function AddBusinessForm({
           },
           whatsapp: {
             enabled: normalizedValues.whatsappEnabled,
-            url: normalizedValues.whatsappUrl,
+            url: "",
           },
           facebook: {
             enabled: normalizedValues.facebookEnabled,
@@ -437,9 +878,21 @@ export function AddBusinessForm({
             url: normalizedValues.xUrl,
           },
         },
+        identity_type: identityFinal.identity_type,
+        identity_number: identityFinal.identity_number,
+        identity_proof_urls: proofUrls,
+        client_photo_url: clientPhotoUrls[0] ?? null,
         logo_url: logoUrls[0] ?? null,
         banner_urls: bannerUrls,
         resource_urls: resourceUrls,
+        master_qr_type: normalizedValues.masterQrType,
+        ai_enabled: normalizedValues.aiEnabled,
+        ai_review_language: normalizedValues.aiReviewLanguage,
+        ai_daily_limit: Number.parseInt(normalizedValues.aiDailyLimit, 10) || 50,
+        ai_suggestions_count:
+          normalizedValues.aiSuggestionsCount.trim() === ""
+            ? null
+            : Number.parseInt(normalizedValues.aiSuggestionsCount.trim(), 10) || null,
       };
 
       const res = await fetch("/api/business", {
@@ -458,6 +911,26 @@ export function AddBusinessForm({
             ? (result as { error: string }).error
             : "Failed to create business";
         setSubmitError(message);
+        const fields =
+          typeof result === "object" &&
+          result !== null &&
+          "fields" in result &&
+          typeof (result as { fields?: unknown }).fields === "object" &&
+          (result as { fields?: unknown }).fields !== null
+            ? ((result as { fields: Record<string, unknown> }).fields as Record<string, unknown>)
+            : null;
+        if (fields) {
+          setErrors((prev) => {
+            const next = { ...prev };
+            const ft = fields.identity_type;
+            const fn = fields.identity_number;
+            if (typeof ft === "string") next.identityType = ft;
+            else delete next.identityType;
+            if (typeof fn === "string") next.identityNumber = fn;
+            else delete next.identityNumber;
+            return next;
+          });
+        }
         return;
       }
 
@@ -489,6 +962,14 @@ export function AddBusinessForm({
         setLogoPreviewUrls([]);
         setBannerPreviewUrls([]);
         setResourcePreviewUrls([]);
+        identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+        clientProfilePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+        setIdentityProofNames([]);
+        setIdentityProofFiles([]);
+        setIdentityProofPreviewUrls([]);
+        setClientProfileNames([]);
+        setClientProfileFiles([]);
+        setClientProfilePreviewUrls([]);
         setUploadErrors({});
         router.push("/admin/businesses");
         return;
@@ -590,16 +1071,43 @@ export function AddBusinessForm({
               />
             </FormField>
             <FormField label="Mobile Number" htmlFor="mobile" required error={errors.mobile}>
-              <input
-                id="mobile"
-                type="tel"
-                autoComplete="tel"
-                value={values.mobile}
-                onChange={(e) => patch("mobile")(sanitizeMobileInput(e.target.value))}
-                onBlur={() => markTouched("mobile")}
-                className={fieldClass("mobile")}
-                placeholder="+91 98765 43210"
-              />
+              <div className="flex gap-2">
+                <select
+                  id="mobile-country"
+                  value={mobileParts.dialCode}
+                  onChange={(e) =>
+                    patch("mobile")(
+                      joinDialAndLocal(e.target.value, mobileParts.localNumber),
+                    )
+                  }
+                  onBlur={() => markTouched("mobile")}
+                  className={`${formSelectBase} shrink-0`}
+                >
+                  {COUNTRY_DIAL_CODES.map((c) => (
+                    <option key={`${c.code}-${c.dialCode}`} value={c.dialCode}>
+                      {`${c.code} ${c.dialCode}`}
+                    </option>
+                  ))}
+                </select>
+                <input
+                  id="mobile"
+                  type="tel"
+                  autoComplete="tel-national"
+                  inputMode="numeric"
+                  value={mobileParts.localNumber}
+                  onChange={(e) =>
+                    patch("mobile")(
+                      joinDialAndLocal(
+                        mobileParts.dialCode,
+                        sanitizePhoneLocalInput(e.target.value),
+                      ),
+                    )
+                  }
+                  onBlur={() => markTouched("mobile")}
+                  className={`${fieldClass("mobile")} flex-1`}
+                  placeholder="9876543210"
+                />
+              </div>
             </FormField>
             <FormField label="Brand Name" htmlFor="brandName" required error={errors.brandName}>
               <input
@@ -612,11 +1120,144 @@ export function AddBusinessForm({
                 placeholder="Acme Coffee"
               />
             </FormField>
+            <FormField label="Identity type" htmlFor="identityType" required error={errors.identityType}>
+              <select
+                id="identityType"
+                value={values.identityType}
+                onChange={(e) => patch("identityType")(e.target.value)}
+                onBlur={() => markTouched("identityType")}
+                className={fieldClass("identityType")}
+              >
+                <option value="aadhaar">Aadhaar</option>
+                <option value="pan">PAN</option>
+                <option value="passport">Passport</option>
+                <option value="voter_id">Voter ID</option>
+              </select>
+            </FormField>
+            <FormField
+              label="Identity number"
+              htmlFor="identityNumber"
+              required
+              error={errors.identityNumber}
+            >
+              <input
+                id="identityNumber"
+                type="text"
+                autoComplete="off"
+                autoCapitalize={values.identityType === "aadhaar" ? "none" : "characters"}
+                inputMode={values.identityType === "aadhaar" ? "numeric" : "text"}
+                maxLength={identityNumberMaxLen}
+                value={values.identityNumber}
+                onChange={(e) => patch("identityNumber")(e.target.value)}
+                onBlur={() => markTouched("identityNumber")}
+                className={fieldClass("identityNumber")}
+                disabled={!values.identityType}
+                placeholder={
+                  values.identityType === "aadhaar"
+                    ? "12-digit Aadhaar number"
+                    : values.identityType === "pan"
+                      ? "e.g. ABCDE1234F"
+                      : values.identityType === "passport"
+                        ? "6–20 letters, numbers, or hyphen"
+                        : values.identityType === "voter_id"
+                          ? "3–15 alphanumeric characters"
+                          : "Select identity type to enter number"
+                }
+              />
+            </FormField>
+            <div className="sm:col-span-2 space-y-6">
+              <FileUploadField
+                id="identity_proof_urls"
+                label="Identity proof photos"
+                required
+                accept={BUSINESS_IMAGE_ACCEPT}
+                multiple
+                maxFiles={10}
+                fileNames={identityProofNames}
+                previewUrls={identityProofPreviewUrls}
+                uploading={isSubmitting && identityProofFiles.length > 0}
+                error={uploadErrors.identityProof ?? errors.identity_proof_urls}
+                onClearAll={() => {
+                  setIdentityProofFiles([]);
+                  setIdentityProofNames([]);
+                  identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                  setIdentityProofPreviewUrls([]);
+                  setUploadErrors((s) => ({ ...s, identityProof: undefined }));
+                  setTouched((prev) => ({ ...prev, identityProofUpload: true }));
+                }}
+                onRemoveAt={(index) => {
+                  const next = identityProofFiles.filter((_, idx) => idx !== index);
+                  setIdentityProofFiles(next);
+                  setIdentityProofNames(next.map((f) => f.name));
+                  identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                  setIdentityProofPreviewUrls(
+                    next.filter((f) => f.type.startsWith("image/")).map((f) => URL.createObjectURL(f)),
+                  );
+                  setUploadErrors((s) => ({ ...s, identityProof: undefined }));
+                  setTouched((prev) => ({ ...prev, identityProofUpload: true }));
+                }}
+                onFilesChange={(files) => {
+                  const incoming = files ? Array.from(files) : [];
+                  const { accepted, errors: nextErrors } = validateAndMergeFiles({
+                    incoming,
+                    existing: identityProofFiles,
+                    maxCount: 10,
+                  });
+                  setIdentityProofFiles(accepted);
+                  setIdentityProofNames(accepted.map((f) => f.name));
+                  identityProofPreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                  setIdentityProofPreviewUrls(
+                    accepted.filter((f) => f.type.startsWith("image/")).map((f) => URL.createObjectURL(f)),
+                  );
+                  setUploadErrors((s) => ({ ...s, identityProof: nextErrors[0] }));
+                  setTouched((prev) => ({ ...prev, identityProofUpload: true }));
+                }}
+                hint="JPG, PNG, or WebP — up to 10 images, 5MB each."
+              />
+              <FileUploadField
+                id="client_photo_url"
+                label="Client profile photo"
+                required
+                accept={BUSINESS_IMAGE_ACCEPT}
+                fileNames={clientProfileNames}
+                previewUrls={clientProfilePreviewUrls}
+                maxFiles={1}
+                hideUploadWhenFilled
+                uploading={isSubmitting && clientProfileFiles.length > 0}
+                error={uploadErrors.clientProfile ?? errors.client_photo_url}
+                onRemoveAt={() => {
+                  setClientProfileFiles([]);
+                  setClientProfileNames([]);
+                  clientProfilePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                  setClientProfilePreviewUrls([]);
+                  setUploadErrors((s) => ({ ...s, clientProfile: undefined }));
+                  setTouched((prev) => ({ ...prev, clientProfileUpload: true }));
+                }}
+                onFilesChange={(files) => {
+                  const incoming = files ? Array.from(files) : [];
+                  const { accepted, errors: nextErrors } = validateAndMergeFiles({
+                    incoming,
+                    existing: [],
+                    maxCount: 1,
+                  });
+                  const next = accepted.slice(0, 1);
+                  setClientProfileFiles(next);
+                  setClientProfileNames(next.map((f) => f.name));
+                  clientProfilePreviewUrls.forEach((u) => URL.revokeObjectURL(u));
+                  setClientProfilePreviewUrls(
+                    next.filter((f) => f.type.startsWith("image/")).map((f) => URL.createObjectURL(f)),
+                  );
+                  setUploadErrors((s) => ({ ...s, clientProfile: nextErrors[0] }));
+                  setTouched((prev) => ({ ...prev, clientProfileUpload: true }));
+                }}
+                hint="Single JPG, PNG, or WebP — max 5MB."
+              />
+            </div>
           </div>
           <FileUploadField
             id="brandLogo"
             label="Brand Logo"
-            accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+            accept={BUSINESS_IMAGE_ACCEPT}
             fileNames={brandLogoNames}
             previewUrls={logoPreviewUrls}
             hideUploadWhenFilled
@@ -638,7 +1279,7 @@ export function AddBusinessForm({
               setLogoSelection(accepted.slice(0, 1));
               setUploadErrors((s) => ({ ...s, logo: nextErrors[0] }));
             }}
-            hint="PNG or JPG, up to 5MB recommended."
+            hint="PNG, JPG, or WebP, up to 5MB recommended."
           />
         </FormSection>
 
@@ -742,6 +1383,69 @@ export function AddBusinessForm({
           </div>
         </FormSection>
 
+        <FormSection
+          title={AI_ADMIN.business.sectionTitle}
+          description="Phase 1 — preferences only; generation UI comes later."
+        >
+          <div className="grid gap-5 sm:grid-cols-2">
+            <FormToggle
+              id="aiEnabled"
+              label={AI_ADMIN.business.enabled}
+              checked={values.aiEnabled}
+              onChange={patch("aiEnabled")}
+            />
+            <FormField label={AI_ADMIN.business.language} htmlFor="aiReviewLanguage">
+              <select
+                id="aiReviewLanguage"
+                value={values.aiReviewLanguage}
+                onChange={(e) =>
+                  patch("aiReviewLanguage")(e.target.value as FormValues["aiReviewLanguage"])
+                }
+                className={fieldClass("aiReviewLanguage")}
+              >
+                <option value="en">{AI_ADMIN.business.languageEn}</option>
+                <option value="hi">{AI_ADMIN.business.languageHi}</option>
+                <option value="hinglish">{AI_ADMIN.business.languageHinglish}</option>
+              </select>
+            </FormField>
+            <FormField
+              label={AI_ADMIN.business.dailyLimit}
+              htmlFor="aiDailyLimit"
+              error={errors.aiDailyLimit}
+              hint="Cap per UTC day (server-side)."
+            >
+              <input
+                id="aiDailyLimit"
+                type="number"
+                min={1}
+                max={50000}
+                value={values.aiDailyLimit}
+                onChange={(e) => patch("aiDailyLimit")(e.target.value)}
+                onBlur={() => markTouched("aiDailyLimit")}
+                className={fieldClass("aiDailyLimit")}
+              />
+            </FormField>
+            <FormField
+              label={AI_ADMIN.business.suggestionsCount}
+              htmlFor="aiSuggestionsCount"
+              error={errors.aiSuggestionsCount}
+              hint={`${AI_ADMIN.business.planDefaultHint} (current plan → ${defaultSuggestionsForPlan(values.subscriptionPlan)}). Leave blank for plan default.`}
+            >
+              <input
+                id="aiSuggestionsCount"
+                type="number"
+                min={1}
+                max={20}
+                placeholder="Plan default"
+                value={values.aiSuggestionsCount}
+                onChange={(e) => patch("aiSuggestionsCount")(e.target.value)}
+                onBlur={() => markTouched("aiSuggestionsCount")}
+                className={fieldClass("aiSuggestionsCount")}
+              />
+            </FormField>
+          </div>
+        </FormSection>
+
         <FormSection title="SECTION 4: Review Settings" description="How reviews are collected and routed.">
           <div className="grid gap-5 lg:grid-cols-2">
             <FormField label="Google Review URL" htmlFor="googleReviewUrl" error={errors.googleReviewUrl}>
@@ -754,6 +1458,19 @@ export function AddBusinessForm({
                 className={fieldClass("googleReviewUrl")}
                 placeholder="https://g.page/..."
               />
+              <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                <input
+                  type="radio"
+                  name={MASTER_QR_GROUP_ADD}
+                  checked={values.masterQrType === "google_review"}
+                  disabled={
+                    !values.googleReviewUrl.trim() || !isSafeHttpUrl(values.googleReviewUrl.trim())
+                  }
+                  onChange={() => patch("masterQrType")("google_review")}
+                  className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                <span>Set as Master QR (Google Review)</span>
+              </label>
             </FormField>
             <FormField label="Rating Threshold" htmlFor="ratingThreshold">
               <select
@@ -762,8 +1479,11 @@ export function AddBusinessForm({
                 onChange={(e) => patch("ratingThreshold")(e.target.value)}
                 className={fieldClass("ratingThreshold")}
               >
+                <option value="1">1 star</option>
+                <option value="2">2 stars</option>
                 <option value="3">3 stars</option>
                 <option value="4">4 stars</option>
+                <option value="5">5 stars</option>
               </select>
             </FormField>
           </div>
@@ -834,7 +1554,15 @@ export function AddBusinessForm({
           </FormField>
         </FormSection>
 
-        <FormSection title="SECTION 5: Channels" description="Optional links with per-channel enablement.">
+        <FormSection
+          title="SECTION 5: Channels"
+          description="Optional links with per-channel enablement. Exactly one Master QR is active; pick which scan destination customers use first."
+        >
+          {errors.masterQrType ? (
+            <p className="mb-3 text-sm text-red-600 dark:text-red-400" role="alert">
+              {errors.masterQrType}
+            </p>
+          ) : null}
           <div className="grid gap-4 lg:grid-cols-2">
             <ChannelRow
               label="Instagram"
@@ -845,16 +1573,79 @@ export function AddBusinessForm({
               enabled={values.instagramEnabled}
               onEnabledChange={patch("instagramEnabled")}
               urlError={errors.instagramUrl}
+              masterOption={{
+                groupName: MASTER_QR_GROUP_ADD,
+                value: "instagram",
+                current: values.masterQrType,
+                onSelect: (mt) => patch("masterQrType")(mt),
+                disabled: !values.instagramEnabled || !isSafeHttpUrl(values.instagramUrl.trim()),
+              }}
             />
-            <ChannelRow
-              label="WhatsApp"
-              urlId="whatsappUrl"
-              url={values.whatsappUrl}
-              onUrlChange={patch("whatsappUrl")}
-              onUrlBlur={() => markTouched("whatsappUrl")}
-              enabled={values.whatsappEnabled}
-              onEnabledChange={patch("whatsappEnabled")}
-              urlError={errors.whatsappUrl}
+            <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
+              <WhatsAppChannelFields
+                enabled={values.whatsappEnabled}
+                onEnabledChange={patch("whatsappEnabled")}
+                dialCode={values.whatsappCountryCode}
+                onDialCodeChange={(v) => patch("whatsappCountryCode")(v.trim())}
+                onDialBlur={() => markTouched("whatsappCountryCode")}
+                localNumber={values.whatsappNumber}
+                onLocalNumberChange={patch("whatsappNumber")}
+                onLocalBlur={() => {
+                  markTouched("whatsappNumber");
+                  setValues((s) => ({
+                    ...s,
+                    whatsappNumber: clampWhatsAppLocalInput(s.whatsappNumber),
+                  }));
+                }}
+                dialError={errors.whatsappCountryCode}
+                localError={errors.whatsappNumber}
+                disabled={isSubmitting}
+                idPrefix="add-wa"
+                dialSelectId="whatsappCountryCode"
+                localInputId="whatsappNumber"
+              />
+              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
+                <input
+                  type="radio"
+                  name={MASTER_QR_GROUP_ADD}
+                  checked={values.masterQrType === "whatsapp"}
+                  disabled={(() => {
+                    if (!values.whatsappEnabled) return true;
+                    const waE = getWhatsAppFormErrors({
+                      enabled: true,
+                      countryDialRaw: values.whatsappCountryCode,
+                      localRaw: values.whatsappNumber,
+                    });
+                    return Boolean(waE.whatsappNumber || waE.whatsappCountryCode);
+                  })()}
+                  onChange={() => patch("masterQrType")("whatsapp")}
+                  className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
+                />
+                <span>Set as Master QR (WhatsApp)</span>
+              </label>
+            </div>
+            <CallChannelFields
+              enabled={values.callEnabled}
+              onEnabledChange={patch("callEnabled")}
+              dialCode={values.callCountryCode}
+              onDialCodeChange={(v) => patch("callCountryCode")(v.trim())}
+              onDialBlur={() => markTouched("callCountryCode")}
+              localNumber={values.callNumber}
+              onLocalNumberChange={patch("callNumber")}
+              onLocalBlur={() => {
+                markTouched("callNumber");
+                setValues((s) => ({
+                  ...s,
+                  callNumber: clampCallLocalInput(s.callNumber),
+                }));
+              }}
+              dialError={errors.callCountryCode}
+              localError={errors.callNumber}
+              disabled={isSubmitting}
+              idPrefix="add-call"
+              dialSelectId="callCountryCode"
+              localInputId="callNumber"
+              labels={callFieldLabels}
             />
             <ChannelRow
               label="Facebook"
@@ -865,6 +1656,13 @@ export function AddBusinessForm({
               enabled={values.facebookEnabled}
               onEnabledChange={patch("facebookEnabled")}
               urlError={errors.facebookUrl}
+              masterOption={{
+                groupName: MASTER_QR_GROUP_ADD,
+                value: "facebook",
+                current: values.masterQrType,
+                onSelect: (mt) => patch("masterQrType")(mt),
+                disabled: !values.facebookEnabled || !isSafeHttpUrl(values.facebookUrl.trim()),
+              }}
             />
             <ChannelRow
               label="Website"
@@ -875,6 +1673,13 @@ export function AddBusinessForm({
               enabled={values.websiteEnabled}
               onEnabledChange={patch("websiteEnabled")}
               urlError={errors.websiteUrl}
+              masterOption={{
+                groupName: MASTER_QR_GROUP_ADD,
+                value: "website",
+                current: values.masterQrType,
+                onSelect: (mt) => patch("masterQrType")(mt),
+                disabled: !values.websiteEnabled || !isSafeHttpUrl(values.websiteUrl.trim()),
+              }}
             />
             <ChannelRow
               label="X (Twitter)"
@@ -885,6 +1690,13 @@ export function AddBusinessForm({
               enabled={values.xEnabled}
               onEnabledChange={patch("xEnabled")}
               urlError={errors.xUrl}
+              masterOption={{
+                groupName: MASTER_QR_GROUP_ADD,
+                value: "twitter",
+                current: values.masterQrType,
+                onSelect: (mt) => patch("masterQrType")(mt),
+                disabled: !values.xEnabled || !isSafeHttpUrl(values.xUrl.trim()),
+              }}
             />
           </div>
         </FormSection>
@@ -894,7 +1706,7 @@ export function AddBusinessForm({
             <FileUploadField
               id="banners"
               label="Banner images"
-              accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+              accept={BUSINESS_IMAGE_ACCEPT}
               multiple
               maxFiles={10}
               fileNames={bannerNames}
@@ -925,7 +1737,7 @@ export function AddBusinessForm({
             <FileUploadField
               id="digitalResources"
               label="Digital resource"
-              accept=".jpg,.jpeg,.png,image/jpeg,image/png"
+              accept={BUSINESS_IMAGE_ACCEPT}
               fileNames={resourceNames}
               previewUrls={resourcePreviewUrls}
               uploading={isSubmitting && resourceFiles.length > 0}

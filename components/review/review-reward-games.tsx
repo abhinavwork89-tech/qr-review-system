@@ -1,6 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { useReviewT } from "@/components/review/review-i18n-provider";
+import { postPublicRewardClaim } from "@/lib/reward/public-reward-claim";
+import { playReviewSubmitSuccessConfetti } from "@/lib/review/review-confetti";
+import { RewardScratchGame } from "@/components/review/rewards/reward-scratch-game";
+import { RewardSpinWheel } from "@/components/review/rewards/reward-spin-wheel";
+import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
 
 type Props = {
   businessId: string;
@@ -9,111 +15,312 @@ type Props = {
   rewardConfig: string[];
 };
 
+type Phase = "closed" | "loading" | "playing" | "result" | "error";
+
+function isBetterLuckMessage(prize: string): boolean {
+  const s = prize.toLowerCase();
+  return (
+    s.includes("better luck") ||
+    s.includes("bad luck") ||
+    /next\s*time/i.test(s) ||
+    s.includes("अगली बार") ||
+    s.includes("बेहतर किस्मत")
+  );
+}
+
 export function ReviewRewardGames({
   businessId,
   spinEnabled,
   scratchEnabled,
   rewardConfig,
 }: Props) {
+  const t = useReviewT();
+  const titleId = useId();
   const rewards = useMemo(
     () => rewardConfig.map((v) => v.trim()).filter((v) => v.length > 0),
     [rewardConfig],
   );
 
-  const [result, setResult] = useState<string | null>(null);
-  const [open, setOpen] = useState(false);
+  const [phase, setPhase] = useState<Phase>("closed");
+  const [gameKind, setGameKind] = useState<"spin" | "scratch" | null>(null);
+  const [claimError, setClaimError] = useState<string | null>(null);
+  const [prize, setPrize] = useState<string | null>(null);
+  const [winIndex, setWinIndex] = useState(0);
+  const [wheelRewards, setWheelRewards] = useState<string[]>([]);
   const [spinUsed, setSpinUsed] = useState<boolean>(() => isUsed(businessId, "spin"));
   const [scratchUsed, setScratchUsed] = useState<boolean>(() =>
     isUsed(businessId, "scratch"),
   );
+  const [isClaiming, setIsClaiming] = useState(false);
+
+  const celebrationFired = useRef(false);
+  const closeBtnRef = useRef<HTMLButtonElement>(null);
+
+  useBodyScrollLock(phase !== "closed");
+
+  const reducedMotion = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    try {
+      return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const resetModal = useCallback(() => {
+    setPhase("closed");
+    setGameKind(null);
+    setClaimError(null);
+    setPrize(null);
+    setWheelRewards([]);
+    setWinIndex(0);
+    setIsClaiming(false);
+    celebrationFired.current = false;
+  }, []);
 
   useEffect(() => {
-    if (open) {
+    if (phase === "playing") {
+      celebrationFired.current = false;
+    }
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase !== "closed") {
       document.body.dataset.reviewRewardModalOpen = "1";
       return () => {
         delete document.body.dataset.reviewRewardModalOpen;
       };
     }
     return;
-  }, [open]);
+  }, [phase]);
+
+  useEffect(() => {
+    if (phase === "closed" || phase === "loading") return;
+    const tmr = window.setTimeout(() => closeBtnRef.current?.focus(), 80);
+    return () => window.clearTimeout(tmr);
+  }, [phase]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (phase === "closed") return;
+      if (e.key === "Escape" && phase !== "loading") {
+        e.preventDefault();
+        resetModal();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [phase, resetModal]);
+
+  useEffect(() => {
+    if (phase !== "result" || !prize) return;
+    if (isBetterLuckMessage(prize)) return;
+    if (celebrationFired.current) return;
+    celebrationFired.current = true;
+    playReviewSubmitSuccessConfetti();
+  }, [phase, prize]);
+
+  const onSpinAnimationDone = useCallback(() => {
+    setPhase("result");
+  }, []);
+
+  const onScratchRevealDone = useCallback(() => {
+    setPhase("result");
+  }, []);
 
   if (rewards.length === 0) return null;
   if (!spinEnabled && !scratchEnabled) return null;
 
-  const runGame = (kind: "spin" | "scratch") => {
+  const beginGame = async (kind: "spin" | "scratch") => {
+    if (isClaiming) return;
     if (kind === "spin" && spinUsed) return;
     if (kind === "scratch" && scratchUsed) return;
-    const won = rewards[Math.floor(Math.random() * rewards.length)] ?? "Better Luck";
-    markUsed(businessId, kind);
-    if (kind === "spin") setSpinUsed(true);
-    if (kind === "scratch") setScratchUsed(true);
-    setResult(won);
-    setOpen(true);
+    setIsClaiming(true);
+    setClaimError(null);
+    setPrize(null);
+    setWheelRewards([]);
+    setGameKind(kind);
+    setPhase("loading");
+    try {
+      const res = await postPublicRewardClaim(businessId, kind);
+      const list = res.rewards.length > 0 ? res.rewards : rewards;
+      setWheelRewards(list);
+      const idx = Math.min(Math.max(0, res.index), Math.max(0, list.length - 1));
+      setWinIndex(idx);
+      setPrize(res.prize || list[idx] || list[0] || "");
+      markUsed(businessId, kind);
+      if (kind === "spin") setSpinUsed(true);
+      if (kind === "scratch") setScratchUsed(true);
+      setPhase("playing");
+    } catch (e) {
+      setClaimError(e instanceof Error ? e.message : t("rewards.errorGeneric"));
+      setPhase("error");
+    } finally {
+      setIsClaiming(false);
+    }
   };
+
+  const showResult = phase === "result" && prize;
+  const better = prize ? isBetterLuckMessage(prize) : false;
 
   return (
     <>
       <section
-        aria-label="Rewards"
+        aria-label={t("rewards.sectionAria")}
         className="rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
       >
         <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center">
           {spinEnabled ? (
             spinUsed ? (
-              <p className="text-sm text-[var(--review-muted)]">
-                You&apos;ve already claimed your spin reward.
-              </p>
+              <p className="text-sm text-[var(--review-muted)]">{t("rewards.spinUsed")}</p>
             ) : (
               <button
                 type="button"
-                onClick={() => runGame("spin")}
-                className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[var(--review-primary)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110"
+                disabled={isClaiming}
+                onClick={() => void beginGame("spin")}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl bg-[var(--review-primary)] px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:pointer-events-none disabled:opacity-50"
               >
-                Spin
+                {t("rewards.spinCta")}
               </button>
             )
           ) : null}
           {scratchEnabled ? (
             scratchUsed ? (
               <p className="text-sm text-[var(--review-muted)]">
-                You&apos;ve already claimed your scratch reward.
+                {t("rewards.scratchUsed")}
               </p>
             ) : (
               <button
                 type="button"
-                onClick={() => runGame("scratch")}
-                className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_16%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] px-4 py-2.5 text-sm font-semibold text-[var(--review-fg)] shadow-sm transition hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-fg))]"
+                disabled={isClaiming}
+                onClick={() => void beginGame("scratch")}
+                className="inline-flex min-h-11 items-center justify-center rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_16%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] px-4 py-2.5 text-sm font-semibold text-[var(--review-fg)] shadow-sm transition hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-fg))] disabled:pointer-events-none disabled:opacity-50"
               >
-                Scratch
+                {t("rewards.scratchCta")}
               </button>
             )
           ) : null}
         </div>
       </section>
 
-      {open && result ? (
+      {phase !== "closed" ? (
         <div
-          className="fixed inset-0 z-[93] flex items-center justify-center bg-zinc-950/45 px-4 backdrop-blur-[1px]"
-          role="dialog"
-          aria-modal="true"
-          onClick={() => setOpen(false)}
+          className="fixed inset-0 z-[93] flex items-center justify-center bg-zinc-950/50 px-3 py-6 backdrop-blur-[2px] [contain:strict]"
+          role="presentation"
+          onClick={() => {
+            if (phase !== "loading") resetModal();
+          }}
         >
           <div
-            className="w-full max-w-sm rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] p-5 shadow-xl"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={titleId}
+            className={`flex max-h-[min(92dvh,680px)] w-full max-w-md flex-col overflow-x-hidden overflow-y-auto overscroll-contain rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_98%,var(--review-fg))] p-4 shadow-2xl sm:p-6 ${
+              phase === "loading" || phase === "playing" || phase === "result"
+                ? "min-h-[min(432px,68svh)] justify-center"
+                : ""
+            }`}
             onClick={(e) => e.stopPropagation()}
           >
-            <p className="text-base font-semibold text-[var(--review-fg)]">
-              You won: {result}
-            </p>
-            <div className="mt-4 flex justify-end">
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="inline-flex items-center justify-center rounded-lg bg-[var(--review-primary)] px-3.5 py-2 text-sm font-medium text-white shadow-sm transition hover:brightness-110"
-              >
-                Close
-              </button>
-            </div>
+            {phase === "loading" ? (
+              <div className="flex min-h-[min(280px,40svh)] flex-col items-center justify-center gap-4 py-8">
+                <div
+                  className="h-10 w-10 animate-spin rounded-full border-2 border-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] border-t-[var(--review-primary)]"
+                  aria-hidden
+                />
+                <p id={titleId} className="text-sm text-[var(--review-muted)]">
+                  {t("rewards.loadingReward")}
+                </p>
+              </div>
+            ) : null}
+
+            {phase === "error" ? (
+              <div className="space-y-4 py-2">
+                <h2 id={titleId} className="text-base font-semibold text-[var(--review-fg)]">
+                  {t("rewards.errorTitle")}
+                </h2>
+                <p className="text-sm text-[var(--review-muted)]">{claimError}</p>
+                <div className="flex flex-wrap justify-end gap-2">
+                  <button
+                    type="button"
+                    className="rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_16%,transparent)] px-4 py-2.5 text-sm font-medium text-[var(--review-fg)]"
+                    onClick={resetModal}
+                  >
+                    {t("rewards.close")}
+                  </button>
+                  {gameKind ? (
+                    <button
+                      ref={closeBtnRef}
+                      type="button"
+                      className="rounded-xl bg-[var(--review-primary)] px-4 py-2.5 text-sm font-semibold text-white"
+                      onClick={() => void beginGame(gameKind)}
+                    >
+                      {t("rewards.tryAgain")}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+            ) : null}
+
+            {phase === "playing" && gameKind === "spin" && wheelRewards.length > 0 ? (
+              <div className="flex min-h-[min(360px,52svh)] w-full flex-col items-center justify-center gap-3 overflow-hidden px-0 py-2">
+                <h2 id={titleId} className="text-center text-sm font-semibold text-[var(--review-fg)]">
+                  {t("rewards.spinPlaying")}
+                </h2>
+                <RewardSpinWheel
+                  rewards={wheelRewards}
+                  winningIndex={winIndex}
+                  reducedMotion={reducedMotion}
+                  onAnimationComplete={onSpinAnimationDone}
+                />
+              </div>
+            ) : null}
+
+            {phase === "playing" && gameKind === "scratch" && prize ? (
+              <div className="flex min-h-[min(340px,52svh)] w-full flex-col items-center justify-center gap-3 overflow-hidden px-0 py-1">
+                <h2 id={titleId} className="text-center text-sm font-semibold text-[var(--review-fg)]">
+                  {t("rewards.scratchPlaying")}
+                </h2>
+                <RewardScratchGame
+                  prize={prize}
+                  reducedMotion={reducedMotion}
+                  onRevealComplete={onScratchRevealDone}
+                  scratchHint={t("rewards.scratchHint")}
+                  tapToReveal={t("rewards.tapToReveal")}
+                />
+              </div>
+            ) : null}
+
+            {showResult ? (
+              <div className="relative mx-auto w-full max-w-sm space-y-6 overflow-hidden rounded-2xl border border-[color-mix(in_srgb,var(--review-primary)_28%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_92%,var(--review-primary)_6%)] px-5 py-8 text-center shadow-[0_12px_40px_rgba(0,0,0,0.1)] sm:px-8">
+                <div
+                  className="pointer-events-none absolute -left-1/4 top-0 h-40 w-[150%] bg-[radial-gradient(ellipse_at_50%_0%,color-mix(in_srgb,var(--review-primary)_35%,transparent),transparent_65%)] opacity-90"
+                  aria-hidden
+                />
+                <div className="relative space-y-4">
+                  <h2
+                    id={titleId}
+                    className="text-xl font-bold tracking-tight text-[var(--review-fg)] motion-safe:[animation:reward-result-fade_0.45s_ease-out_1_forwards] sm:text-2xl"
+                  >
+                    {better ? t("rewards.betterLuckTitle") : t("rewards.congratsTitle")}
+                  </h2>
+                  <p className="text-3xl font-extrabold leading-tight text-[var(--review-primary)] motion-safe:[animation:reward-result-fade_0.5s_ease-out_1_forwards] motion-safe:drop-shadow-[0_2px_24px_color-mix(in_srgb,var(--review-primary)_45%,transparent)] sm:text-[2rem]">
+                    {prize}
+                  </p>
+                  <p className="text-sm leading-relaxed text-[var(--review-muted)] motion-safe:[animation:reward-result-fade_0.55s_ease-out_1_forwards]">
+                    {better ? t("rewards.betterLuckBody") : t("rewards.congratsBody", { prize })}
+                  </p>
+                  <button
+                    ref={closeBtnRef}
+                    type="button"
+                    className="mt-2 w-full min-h-12 rounded-xl bg-[var(--review-primary)] px-4 py-3.5 text-sm font-semibold text-white shadow-[0_4px_14px_color-mix(in_srgb,var(--review-primary)_55%,transparent)] transition hover:brightness-110 active:scale-[0.99] motion-reduce:active:scale-100"
+                    onClick={resetModal}
+                  >
+                    {t("rewards.close")}
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
       ) : null}
@@ -139,6 +346,6 @@ function markUsed(id: string, kind: "spin" | "scratch") {
   try {
     localStorage.setItem(storageKey(id, kind), "1");
   } catch {
-    // ignore storage errors
+    /* ignore */
   }
 }

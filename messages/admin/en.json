@@ -1,0 +1,40 @@
+{
+  "ai": {
+    "sectionTitle": "AI review assistance",
+    "sectionDescription": "Global controls for GPT-powered review suggestions (Phase 1 — infrastructure only).",
+    "globalEnabled": "Enable AI globally",
+    "emergencyDisable": "Emergency disable (blocks all AI)",
+    "model": "Model",
+    "monthlyBudgetUsd": "Monthly budget (estimated USD, soft cap)",
+    "dailyGlobalLimit": "Daily global generation limit",
+    "maxCharacters": "Max characters per suggestion",
+    "defaultCooldownSeconds": "Default cooldown between generations (seconds)",
+    "save": "Save AI settings",
+    "saving": "Saving…",
+    "saved": "AI settings saved.",
+    "business": {
+      "sectionTitle": "AI review assistance",
+      "enabled": "Enable AI for this business",
+      "language": "Suggestion language",
+      "languageEn": "English",
+      "languageHi": "Hindi",
+      "languageHinglish": "Hinglish",
+      "dailyLimit": "Per-business daily generation limit",
+      "suggestionsCount": "Suggestions count (leave blank for plan default)",
+      "planDefaultHint": "Plan default: Free = 1, Pro = 3, Pro Plus = 5",
+      "effectiveSuggestions": "Effective suggestions (with plan default)"
+    },
+    "status": {
+      "blockedEmergency": "Blocked: emergency disable is on",
+      "blockedGlobalOff": "Blocked: AI is disabled globally",
+      "blockedBusinessOff": "Blocked: AI is disabled for this business",
+      "blockedInactive": "Blocked: business is not active",
+      "allowed": "AI may be used (subject to rate limits)"
+    },
+    "limits": {
+      "globalDaily": "Global daily usage",
+      "businessDaily": "Business daily usage",
+      "cooldown": "Cooldown"
+    }
+  }
+}

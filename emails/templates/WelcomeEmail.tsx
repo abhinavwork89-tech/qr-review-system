@@ -6,6 +6,9 @@ export type WelcomeEmailProps = EmailBrandContext & {
   previewText?: string;
   reviewPageUrl: string;
   qrImages: QrImageAsset[];
+  /** Overrides default "Your QR codes" when master QR is shown. */
+  qrSectionHeading?: string;
+  qrSectionHint?: string;
   /** Overrides default onboarding copy when provided. */
   greeting?: string;
   title?: string;
@@ -16,6 +19,8 @@ export function WelcomeEmail({
   previewText,
   reviewPageUrl,
   qrImages,
+  qrSectionHeading,
+  qrSectionHint,
   greeting,
   title,
   extraMessage,
@@ -71,6 +76,8 @@ export function WelcomeEmail({
       ctaText="Open Your Review Page"
       ctaUrl={reviewPageUrl}
       qrImages={qrImages}
+      qrSectionHeading={qrSectionHeading}
+      qrSectionHint={qrSectionHint}
     />
   );
 }
