@@ -19,52 +19,50 @@ export function ReviewPageFooter({ settings }: { settings: AppSettingsPublic }) 
 
   return (
     <footer
-      className="mt-auto px-4 py-4 sm:px-5 sm:py-5"
-      style={{
-        borderTop:
-          "1px solid color-mix(in srgb, var(--review-fg) 12%, transparent)",
-        backgroundColor:
-          "color-mix(in srgb, var(--review-bg) 92%, var(--review-fg))",
-      }}
+      className="mt-3 px-3 sm:px-3 py-4 client-footer bg-[var(--review-primary)] text-white"
     >
       <div className="mx-auto flex max-w-lg flex-col items-center gap-2 text-center sm:flex-row sm:flex-wrap sm:justify-center sm:gap-x-2 sm:gap-y-1">
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <span className="text-[13px] leading-snug text-[var(--review-muted)] sm:text-sm">
-            {t("footer.poweredBy")}
-          </span>
-          {s.brandingLogoUrl ? (
-            <span className="relative inline-flex h-7 w-[120px] max-w-[160px] items-center">
-              {isOptimizableRemoteImageUrl(s.brandingLogoUrl) ? (
-                <Image
-                  src={s.brandingLogoUrl}
-                  alt=""
-                  width={160}
-                  height={28}
-                  className="h-7 w-auto max-h-7 max-w-[160px] object-contain object-center"
-                  sizes="160px"
-                />
-              ) : (
-                /* eslint-disable-next-line @next/next/no-img-element -- non-Supabase branding URL */
-                <img
-                  src={s.brandingLogoUrl}
-                  alt=""
-                  loading="lazy"
-                  decoding="async"
-                  className="h-7 w-auto max-h-7 max-w-[160px] object-contain object-center"
-                />
-              )}
-            </span>
-          ) : null}
+          <div className="flex flex-wrap items-center justify-center gap-2">
+            {s.brandingLogoUrl ? (
+              <div className="relative inline-flex  items-center">
+                {isOptimizableRemoteImageUrl(s.brandingLogoUrl) ? (
+                  <Image
+                    src={s.brandingLogoUrl}
+                    alt=""
+                    width={200}
+                    height={48}
+                    className="h-12 w-auto max-h-12 max-w-auto object-contain object-center"
+                    sizes="160px"
+                  />
+                ) : (
+                  /* eslint-disable-next-line @next/next/no-img-element -- non-Supabase branding URL */
+                  <img
+                    src={s.brandingLogoUrl}
+                    alt=""
+                    loading="lazy"
+                    decoding="async"
+                    className="h-12 w-auto max-h-12 max-w-auto object-contain object-center"
+                  />
+                )}
+              </div>
+            ) : null}
+            <div>
+
+            </div>
+          </div>
+          <span className="text-[14px] leading-snug text-white sm:text-sm">
+            {t("footer.poweredBy")} 
+          </span> {"|"}
           <a
-            href={s.poweredByUrl || "https://onecore.example"}
+            href={s.poweredByUrl || "https://onecoreapp.com"}
             target="_blank"
             rel="noopener noreferrer"
-            className="text-[13px] font-semibold leading-snug tracking-wide text-[var(--review-primary)] underline-offset-4 hover:underline sm:text-sm"
-          >
-            {linkLabel}
+            className="text-[14px] font-semibold leading-snug tracking-wide text-white underline-offset-4 hover:underline sm:text-sm"
+          >{linkLabel}
           </a>
         </div>
-        <p className="w-full max-w-full text-[12px] leading-snug text-[var(--review-muted)] sm:w-auto">
+        <p className="w-full max-w-full text-[12px] leading-snug text-white sm:w-auto mt-1 sm:mt-3">
           © {s.copyrightYear}
           {s.copyrightText.trim() ? ` ${s.copyrightText.trim()}` : ""}
         </p>

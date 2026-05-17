@@ -19,14 +19,16 @@ export function ReviewDigitalResources({ urls }: Props) {
   return (
     <section
       aria-label={t("resources.sectionAria")}
-      className="w-full rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
+      className="digital-resource w-full  rounded-none sm:rounded-2xl bg-white p-4 box-shadow sm:p-5"
     >
-      <h2 className="text-sm font-semibold text-[var(--review-fg)] sm:text-base">
-        {t("resources.title")}
-      </h2>
-      <p className="mt-0.5 text-xs leading-relaxed text-[var(--review-muted)]">
-        {t("resources.subtitle")}
-      </p>
+      <div className="w-full section-head ">
+        <h2 className="text-base sm:text-start font-semibold text-[var(--review-fg)]">
+          {t("resources.title")}
+        </h2>
+        <p className="mt-0.5  text-sm leading-relaxed text-[var(--review-muted)]">
+          {t("resources.subtitle")}
+        </p>
+      </div>
       <ul className="mt-4 grid list-none grid-cols-1 gap-3 sm:grid-cols-2" role="list">
         {safe.map((url, i) => (
           <li key={`${baseId}-res-${i}`} className="min-w-0">
@@ -71,7 +73,7 @@ function ResourceTile({ url, labelOpen }: { url: string; labelOpen: string }) {
           rel="noopener noreferrer"
           className="group block focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--review-primary)]"
         >
-          <div className="relative aspect-[4/3] w-full bg-[color-mix(in_srgb,var(--review-bg)_88%,var(--review-fg))]">
+          <div className="relative aspect-[4/3] w-full bg-white ">
             {!loaded ? (
               <div
                 className="absolute inset-0 animate-pulse bg-[color-mix(in_srgb,var(--review-fg)_8%,transparent)] motion-reduce:animate-none"
@@ -84,9 +86,8 @@ function ResourceTile({ url, labelOpen }: { url: string; labelOpen: string }) {
                 alt=""
                 fill
                 sizes="(max-width: 640px) 100vw, 50vw"
-                className={`object-contain transition-opacity duration-300 ${
-                  loaded ? "opacity-100" : "opacity-0"
-                }`}
+                className={`p-3 object-contain transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"
+                  }`}
                 onLoad={onImgLoad}
                 onError={() => setBroken(true)}
               />
@@ -99,9 +100,8 @@ function ResourceTile({ url, labelOpen }: { url: string; labelOpen: string }) {
                 sizes="(max-width: 640px) 100vw, 50vw"
                 onLoad={onImgLoad}
                 onError={() => setBroken(true)}
-                className={`h-full w-full max-h-[280px] object-contain transition-opacity duration-300 ${
-                  loaded ? "opacity-100" : "opacity-0"
-                }`}
+                className={`h-full w-full max-h-[280px] object-contain transition-opacity duration-300 ${loaded ? "opacity-100" : "opacity-0"
+                  }`}
               />
             )}
           </div>

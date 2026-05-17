@@ -48,7 +48,7 @@ export function MasterEmailLayout({
         style={{
           margin: 0,
           padding: "24px 12px",
-          backgroundColor: pageBg,
+          backgroundColor: pageBg, 
           fontFamily:
             '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
         }}

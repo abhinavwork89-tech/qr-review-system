@@ -1,0 +1,60 @@
+// font
+$font-weight-semi-light: 300;
+$font-weight-regular: 400;
+$font-weight-medium: 500;
+$font-weight-semibold: 600;
+$font-weight-bold: 700;
+$font-weight-extra-bold: 800;
+$font-weight-black: 900;
+
+// Devices Media Queries:
+$xxl-laptop: 1440px;
+$xl-laptop: 1350px;
+$medium-desktop: 1200px;
+$tablet-b: 1099px;
+$tablet: 1024px;
+$tablet-p: 992px;
+$tablet-s-p: 900px;
+$mobile: 768px;
+$mobile2: 550px;
+$small-mobile: 480px;
+$xs-mobile: 395px;
+$xxs-mobile: 375px;
+
+$template-width: 480px;
+
+// Color Values
+:root {
+  --primary-color: #252DC7;
+  --primary-hover-color: var(--primary-color);
+  --secondary-color: #41D9B9;
+  --secondary-hover-color: #FFF7F6;
+  --primary-color-transparent: #252dc780;
+  --secondary-color-transparent: #37b498;
+  --white: #fff;
+  --black: #000;
+  --light-black: #191919;
+  --red: #FF0000;
+  --gray: #565D66;
+  --light-gray: #DCDCDC;
+  --light-gray-bg: #ffffff17;
+  --green: #0d940d;
+  --border-gray: #DBDBDB;
+  --fontFamily: "Poppins", sans-serif;
+  --gradient_pink: #FF1CF7;
+  --gradient_blue: #00F0FF;
+  --theme_Gradient: linear-gradient(45deg, var(--gradient_pink), var(--gradient_blue));
+}
+
+$theme: var(--primary-color);
+$dark_gray: #414242;
+$alert-input: #fed2d291;
+$blue: #3a6ae7;
+$input-height: 35px;
+$height_main: 50px;
+
+
+// other styles
+$btn-shadow: 0px 3px 6px #00000029;
+$box-shadow: 0 0 20px 3px #0000000f;
+$box-shadow-primary: 0px 4px 15px rgba(var(--primary-color), 0.25);

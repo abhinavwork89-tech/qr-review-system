@@ -234,7 +234,7 @@ export function RewardScratchGame({
   return (
     <div className="mx-auto w-full max-w-[min(100%,360px)] space-y-3">
       {!fallbackMode ? (
-        <p className="text-center text-xs leading-relaxed text-[var(--review-muted)]">{scratchHint}</p>
+        <p className="text-center text-sm leading-relaxed text-[var(--review-muted)]">{scratchHint}</p>
       ) : (
         <button
           type="button"
@@ -266,7 +266,7 @@ export function RewardScratchGame({
           } ${revealed ? "motion-safe:scale-[1.02] motion-safe:duration-300" : ""}`}
           aria-live="polite"
         >
-          <p className="text-[10px] font-bold uppercase tracking-[0.35em] text-[var(--review-muted)]">
+          <p className="text-sm font-bold uppercase tracking-[0.35em] text-[var(--review-muted)]">
             {"\u2728"}
           </p>
           <p className="bg-gradient-to-br from-[var(--review-fg)] to-[color-mix(in_srgb,var(--review-fg)_55%,var(--review-primary))] bg-clip-text text-2xl font-extrabold leading-tight text-transparent sm:text-[1.65rem]">

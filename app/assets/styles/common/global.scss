@@ -1,0 +1,238 @@
+// Scroll Bar design
+/* width */
+::-webkit-scrollbar {
+    width: 8px;
+}
+
+/* Track */
+::-webkit-scrollbar-track {
+    background: #ccc;
+}
+
+/* Handle */
+::-webkit-scrollbar-thumb {
+    background: #888;
+}
+
+/* Handle on hover */
+::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+.container_fluid {
+    width: 100%;
+}
+
+.container {
+    width: 100%;
+    padding-right: 15px;
+    padding-left: 15px;
+    margin-right: auto;
+    margin-left: auto;
+    max-width: calc(1250px - 30px);
+}
+
+.m_0 {
+    margin: 0px !important;
+}
+
+.mt-0 {
+    margin-top: 0 !important;
+}
+
+.mt-1 {
+    margin-top: 10px !important;
+}
+
+.mt-20 {
+    margin-top: 20px !important;
+}
+
+.mt-30 {
+    margin-top: 30px !important;
+}
+
+.mt-40 {
+    margin-top: 40px !important;
+}
+
+.mb-0 {
+    margin-bottom: 0px !important;
+}
+
+.mb-10 {
+    margin-bottom: 10px !important;
+}
+
+.mb-15 {
+    margin-bottom: 15px !important;
+}
+
+.mb-20 {
+    margin-bottom: 20px !important;
+}
+
+.pb-30 {
+    padding-bottom: 30px;
+}
+
+.p-30 {
+    padding: 30px;
+}
+
+.pb-20 {
+    padding-bottom: 20px;
+}
+
+.pt-5 {
+    padding: 5px;
+}
+
+.pt-10 {
+    padding-top: 10px;
+}
+
+.pos_relative {
+    position: relative;
+}
+
+.row-start {
+    margin-top: 30px;
+}
+
+.text-cap {
+    text-transform: capitalize;
+}
+
+.text_underline {
+    text-decoration: underline;
+}
+
+.text-center {
+    text-align: center;
+}
+
+.text-left {
+    text-align: left !important;
+}
+
+.text-right {
+    text-align: right !important;
+}
+
+.d-block {
+    display: block;
+}
+.h-100{
+    height: 100%;
+}
+
+.w-100 {
+    width: 100% !important;
+}
+
+.w-50 {
+    width: 50%;
+}
+
+.text_lowercase {
+    text-transform: lowercase;
+}
+
+.cursor_pointer {
+    cursor: pointer;
+}
+
+.text_danger {
+    color: var(--red);
+}
+
+.cursor_notAllow {
+    cursor: not-allowed
+}
+
+
+.custom_two_col {
+    @include item_center;
+    justify-content: space-between;
+
+    div {
+        &:first-child {
+            margin-right: 10px;
+        }
+    }
+
+    &.ml0 {
+        div {
+            &:first-child {
+                margin-right: 0;
+            }
+        }
+    }
+
+    &.align_top {
+        align-items: self-start;
+    }
+} 
+
+.error {
+    color: var(--red);
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 24px;
+}
+
+.no_wrap {
+    flex-wrap: inherit !important;
+}
+
+.text-black {
+    color: var(--black) !important;
+}
+
+.text-primary {
+    color: var(--primary-color) !important;
+}
+
+.text-white {
+    color: var(--white) !important;
+}
+
+.text-green {
+    color: var(--green);
+}
+
+.text-red,
+.required,
+.error {
+    color: var(--red);
+}
+
+.dynamic-img {
+    background-repeat: no-repeat;
+    background-size: cover;
+    display: block;
+    background-position: center center;
+
+    >img {
+        opacity: 0;
+        display: block;
+        width: 100%;
+    }
+}
+
+button{
+    cursor: pointer;
+}
+
+a{
+    &:focus,
+    &:focus-visible,
+    &:focus-within{
+        box-shadow:  none !important;
+        outline: none !important;
+    }
+}
+.box-shadow{
+    box-shadow: $box-shadow;
+}
