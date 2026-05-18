@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useReviewT } from "@/components/review/review-i18n-provider";
 import { postPublicRewardClaim } from "@/lib/reward/public-reward-claim";
-import { playReviewSubmitSuccessConfetti } from "@/lib/review/review-confetti";
+import { playRewardWinConfetti } from "@/lib/review/review-confetti";
 import { RewardScratchGame } from "@/components/review/rewards/reward-scratch-game";
 import { RewardSpinWheel } from "@/components/review/rewards/reward-spin-wheel";
 import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
@@ -55,6 +55,7 @@ export function ReviewRewardGames({
   const [isClaiming, setIsClaiming] = useState(false);
 
   const celebrationFired = useRef(false);
+  const scratchRevealCommitted = useRef(false);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
 
   useBodyScrollLock(phase !== "closed");
@@ -77,13 +78,15 @@ export function ReviewRewardGames({
     setWinIndex(0);
     setIsClaiming(false);
     celebrationFired.current = false;
+    scratchRevealCommitted.current = false;
   }, []);
 
-  useEffect(() => {
-    if (phase === "playing") {
-      celebrationFired.current = false;
-    }
-  }, [phase]);
+  const fireWinCelebration = useCallback((prizeText: string | null) => {
+    if (!prizeText || isBetterLuckMessage(prizeText)) return;
+    if (celebrationFired.current) return;
+    celebrationFired.current = true;
+    requestAnimationFrame(() => playRewardWinConfetti());
+  }, []);
 
   useEffect(() => {
     if (phase !== "closed") {
@@ -115,19 +118,22 @@ export function ReviewRewardGames({
 
   useEffect(() => {
     if (phase !== "result" || !prize) return;
-    if (isBetterLuckMessage(prize)) return;
-    if (celebrationFired.current) return;
-    celebrationFired.current = true;
-    playReviewSubmitSuccessConfetti();
-  }, [phase, prize]);
+    fireWinCelebration(prize);
+  }, [phase, prize, fireWinCelebration]);
 
   const onSpinAnimationDone = useCallback(() => {
     setPhase("result");
   }, []);
 
   const onScratchRevealDone = useCallback(() => {
+    if (scratchRevealCommitted.current) return;
+    scratchRevealCommitted.current = true;
+    markUsed(businessId, "scratch");
+    setScratchUsed(true);
+    clearPendingScratch(businessId);
+    fireWinCelebration(prize);
     setPhase("result");
-  }, []);
+  }, [businessId, prize, fireWinCelebration]);
 
   if (rewards.length === 0) return null;
   if (!spinEnabled && !scratchEnabled) return null;
@@ -143,15 +149,23 @@ export function ReviewRewardGames({
     setGameKind(kind);
     setPhase("loading");
     try {
-      const res = await postPublicRewardClaim(businessId, kind);
+      let res: Awaited<ReturnType<typeof postPublicRewardClaim>>;
+      if (kind === "scratch") {
+        const pending = readPendingScratch(businessId);
+        res = pending ?? (await postPublicRewardClaim(businessId, kind));
+        if (!pending) writePendingScratch(businessId, res);
+      } else {
+        res = await postPublicRewardClaim(businessId, kind);
+      }
       const list = res.rewards.length > 0 ? res.rewards : rewards;
       setWheelRewards(list);
       const idx = Math.min(Math.max(0, res.index), Math.max(0, list.length - 1));
       setWinIndex(idx);
       setPrize(res.prize || list[idx] || list[0] || "");
-      markUsed(businessId, kind);
-      if (kind === "spin") setSpinUsed(true);
-      if (kind === "scratch") setScratchUsed(true);
+      if (kind === "spin") {
+        markUsed(businessId, kind);
+        setSpinUsed(true);
+      }
       setPhase("playing");
     } catch (e) {
       setClaimError(e instanceof Error ? e.message : t("rewards.errorGeneric"));
@@ -244,7 +258,7 @@ export function ReviewRewardGames({
 
       {phase !== "closed" ? (
         <div
-          className="fixed inset-0 z-[93] flex items-center justify-center bg-zinc-950/50 px-3 py-6 backdrop-blur-[2px] [contain:strict]"
+          className="fixed inset-0 z-[93] flex items-center justify-center bg-zinc-950/50 px-3 py-6 backdrop-blur-[2px]"
           role="presentation"
           onClick={() => {
             if (phase !== "loading") resetModal();
@@ -384,6 +398,51 @@ function markUsed(id: string, kind: "spin" | "scratch") {
   if (typeof window === "undefined") return;
   try {
     localStorage.setItem(storageKey(id, kind), "1");
+  } catch {
+    /* ignore */
+  }
+}
+
+type PendingScratchClaim = {
+  prize: string;
+  index: number;
+  rewards: string[];
+};
+
+function pendingScratchKey(id: string): string {
+  return `reward:scratch:pending:${id}`;
+}
+
+function readPendingScratch(id: string): PendingScratchClaim | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = sessionStorage.getItem(pendingScratchKey(id));
+    if (!raw) return null;
+    const o = JSON.parse(raw) as PendingScratchClaim;
+    if (typeof o.prize !== "string" || !Array.isArray(o.rewards)) return null;
+    return {
+      prize: o.prize,
+      index: typeof o.index === "number" ? o.index : 0,
+      rewards: o.rewards.filter((s): s is string => typeof s === "string" && s.length > 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function writePendingScratch(id: string, claim: PendingScratchClaim) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.setItem(pendingScratchKey(id), JSON.stringify(claim));
+  } catch {
+    /* ignore */
+  }
+}
+
+function clearPendingScratch(id: string) {
+  if (typeof window === "undefined") return;
+  try {
+    sessionStorage.removeItem(pendingScratchKey(id));
   } catch {
     /* ignore */
   }

@@ -188,7 +188,7 @@ export function RewardSpinWheel({
                     fill={i % 2 === 0 ? "#ffffff" : "var(--review-fg)"}
                     fontSize={fontSize}
                     fontWeight="700"
-                    fontFamily="system-ui,Segoe UI,sans-serif"
+                    fontFamily="inherit"
                     transform={`rotate(${mid + 90}, ${tx}, ${ty})`}
                     style={{ userSelect: "none", textShadow: i % 2 === 0 ? "0 1px 2px rgba(0,0,0,0.35)" : "none" }}
                   >

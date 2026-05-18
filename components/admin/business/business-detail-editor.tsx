@@ -10,6 +10,10 @@ import { FormSection } from "@/components/admin/add-business/form-section";
 import { FormToggle } from "@/components/admin/add-business/form-toggle";
 import { formInputBase, formInputError, formSelectBase } from "@/components/admin/add-business/form-styles";
 import { BrandedQrTile } from "@/components/admin/business/branded-qr-tile";
+import {
+  RewardGameModeDisplay,
+  RewardGameModeSelector,
+} from "@/components/admin/business/reward-game-mode-display";
 import { BusinessStatusToggleButton } from "@/components/admin/business/business-status-toggle-button";
 import {
   sanitizeMobileInput,
@@ -46,6 +50,14 @@ import {
 import { validateBrandHexColor } from "@/lib/admin/brand-color-validation";
 import { resolveBusinessTypeDisplayName } from "@/lib/admin/business-type-display";
 import { isSafeHttpUrl } from "@/lib/review/business-config";
+import { isSafeYouTubeUrl } from "@/lib/review/youtube-url";
+import {
+  validateDetailChannelErrors,
+  validateEmailField,
+  validateMasterQrSelection,
+  validateMobileField,
+  validateOptionalGoogleUrl,
+} from "@/lib/admin/business-form-validation";
 import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
 import { adminQrLabelToScanType } from "@/lib/scan/qr-types";
 import {
@@ -114,6 +126,7 @@ type DetailValues = {
     instagram: Channel;
     whatsapp: Channel;
     facebook: Channel;
+    youtube: Channel;
     website: Channel;
     x: Channel;
   };
@@ -176,6 +189,7 @@ function detailValuesToMasterBase(v: DetailValues) {
       instagram: { enabled: v.channels.instagram.enabled, url: v.channels.instagram.url },
       whatsapp: { enabled: v.channels.whatsapp.enabled, url: v.channels.whatsapp.url },
       facebook: { enabled: v.channels.facebook.enabled, url: v.channels.facebook.url },
+      youtube: { enabled: v.channels.youtube.enabled, url: v.channels.youtube.url },
       website: { enabled: v.channels.website.enabled, url: v.channels.website.url },
       x: { enabled: v.channels.x.enabled, url: v.channels.x.url },
     },
@@ -253,6 +267,15 @@ export function BusinessDetailEditor({
   const [callErrors, setCallErrors] = useState<{
     callCountryCode?: string;
     callNumber?: string;
+  }>({});
+  const [channelErrors, setChannelErrors] = useState<
+    Partial<Record<"instagram" | "facebook" | "youtube" | "website" | "x", string>>
+  >({});
+  const [masterQrError, setMasterQrError] = useState<string | undefined>();
+  const [basicFieldErrors, setBasicFieldErrors] = useState<{
+    email?: string;
+    mobile?: string;
+    googleUrl?: string;
   }>({});
 
   const valuesRef = useRef<DetailValues>(initial);
@@ -334,6 +357,50 @@ export function BusinessDetailEditor({
     );
     queueMicrotask(() => setCallErrors(ce));
   }, [isEditing, values.callEnabled, values.callCountryCode, values.callNumber]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      queueMicrotask(() => setChannelErrors({}));
+      return;
+    }
+    queueMicrotask(() => {
+      setChannelErrors(validateDetailChannelErrors(values.channels));
+    });
+  }, [isEditing, values.channels]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      queueMicrotask(() => setMasterQrError(undefined));
+      return;
+    }
+    const base = detailValuesToMasterBase(values);
+    queueMicrotask(() => {
+      setMasterQrError(
+        validateMasterQrSelection(base, values.masterQrType) ?? undefined,
+      );
+    });
+  }, [
+    isEditing,
+    values.masterQrType,
+    values.googleUrl,
+    values.channels,
+    values.whatsappCountryCode,
+    values.whatsappNumber,
+  ]);
+
+  useEffect(() => {
+    if (!isEditing) {
+      queueMicrotask(() => setBasicFieldErrors({}));
+      return;
+    }
+    queueMicrotask(() => {
+      setBasicFieldErrors({
+        email: validateEmailField(values.email),
+        mobile: validateMobileField(values.mobile),
+        googleUrl: validateOptionalGoogleUrl(values.googleUrl),
+      });
+    });
+  }, [isEditing, values.email, values.mobile, values.googleUrl]);
 
   useEffect(() => {
     if (!isEditing) {
@@ -457,7 +524,14 @@ export function BusinessDetailEditor({
       setSubmitError(null);
       setSubmitSuccess(null);
       if (key === "primaryColor" || key === "secondaryColor") {
-        setBrandingErrors((e) => ({ ...e, [key]: undefined }));
+        const err =
+          key === "primaryColor"
+            ? validateBrandHexColor(String(value))
+            : validateBrandHexColor(String(value));
+        setBrandingErrors((e) => ({
+          ...e,
+          [key]: err ?? undefined,
+        }));
       }
       if (key === "businessType") {
         setBusinessTypeError(null);
@@ -539,6 +613,9 @@ export function BusinessDetailEditor({
     setBrandingErrors({});
     setBusinessTypeError(null);
     setIdentityFieldErrors({});
+    setChannelErrors({});
+    setMasterQrError(undefined);
+    setBasicFieldErrors({});
   };
 
   const hasDirty = useMemo(
@@ -637,6 +714,28 @@ export function BusinessDetailEditor({
     });
     if (masterErrSave) {
       setSubmitError(masterErrSave);
+      return;
+    }
+    const emailErr = validateEmailField(saveSnap.email);
+    const mobileErr = validateMobileField(saveSnap.mobile);
+    const googleErr = validateOptionalGoogleUrl(saveSnap.googleUrl);
+    if (emailErr || mobileErr || googleErr) {
+      setBasicFieldErrors({
+        email: emailErr,
+        mobile: mobileErr,
+        googleUrl: googleErr,
+      });
+      setSubmitError(
+        [emailErr, mobileErr, googleErr].filter(Boolean).join(" ") ||
+          "Please fix highlighted fields.",
+      );
+      return;
+    }
+    const chErrs = validateDetailChannelErrors(saveSnap.channels);
+    const firstChannelMsg = Object.values(chErrs).find(Boolean);
+    if (firstChannelMsg) {
+      setChannelErrors(chErrs);
+      setSubmitError(firstChannelMsg);
       return;
     }
     const idType = parseIdentityTypeInput(saveSnap.identityType) || null;
@@ -1092,16 +1191,18 @@ export function BusinessDetailEditor({
                 disabled={!isEditing}
               />
             </FormField>
-            <FormField label="Email" htmlFor="email">
+            <FormField label="Email" htmlFor="email" error={basicFieldErrors.email}>
               <input
                 id="email"
+                type="email"
+                autoComplete="email"
                 value={values.email}
                 onChange={(e) => setField("email")(e.target.value)}
-                className={formInputBase}
+                className={`${formInputBase} ${basicFieldErrors.email ? formInputError : ""}`}
                 disabled={!isEditing}
               />
             </FormField>
-            <FormField label="Mobile" htmlFor="mobile">
+            <FormField label="Mobile" htmlFor="mobile" error={basicFieldErrors.mobile}>
               <div className="flex gap-2">
                 <select
                   id="mobile-country"
@@ -1134,7 +1235,7 @@ export function BusinessDetailEditor({
                       ),
                     )
                   }
-                  className={`${formInputBase} flex-1`}
+                  className={`${formInputBase} flex-1 ${basicFieldErrors.mobile ? formInputError : ""}`}
                   disabled={!isEditing}
                   placeholder="9876543210"
                 />
@@ -1756,12 +1857,16 @@ export function BusinessDetailEditor({
 
         <FormSection title="SECTION 4: Review Settings">
           <div className="grid gap-5 lg:grid-cols-2">
-            <FormField label="Google URL" htmlFor="googleUrl">
+            <FormField
+              label="Google URL"
+              htmlFor="googleUrl"
+              error={basicFieldErrors.googleUrl}
+            >
               <input
                 id="googleUrl"
                 value={values.googleUrl}
                 onChange={(e) => setField("googleUrl")(e.target.value)}
-                className={formInputBase}
+                className={`${formInputBase} ${basicFieldErrors.googleUrl ? formInputError : ""}`}
                 disabled={!isEditing}
               />
               <label
@@ -1821,56 +1926,26 @@ export function BusinessDetailEditor({
             />
             <div className="sm:col-span-2 space-y-2 rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
               <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Reward game</p>
-              <div className="flex flex-wrap gap-4 text-sm text-zinc-700 dark:text-zinc-300">
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  <input
-                    type="radio"
-                    name="rewardGameMode"
-                    checked={!values.spinEnabled && !values.scratchEnabled}
-                    disabled={!isEditing}
-                    onChange={() => {
-                      if (!isEditing) return;
-                      setValues((s) => ({ ...s, spinEnabled: false, scratchEnabled: false }));
-                      setSubmitError(null);
-                      setSubmitSuccess(null);
-                    }}
-                    className="accent-indigo-600"
-                  />
-                  None
-                </label>
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  <input
-                    type="radio"
-                    name="rewardGameMode"
-                    checked={values.spinEnabled}
-                    disabled={!isEditing}
-                    onChange={() => {
-                      if (!isEditing) return;
-                      setValues((s) => ({ ...s, spinEnabled: true, scratchEnabled: false }));
-                      setSubmitError(null);
-                      setSubmitSuccess(null);
-                    }}
-                    className="accent-indigo-600"
-                  />
-                  Spin
-                </label>
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  <input
-                    type="radio"
-                    name="rewardGameMode"
-                    checked={values.scratchEnabled}
-                    disabled={!isEditing}
-                    onChange={() => {
-                      if (!isEditing) return;
-                      setValues((s) => ({ ...s, spinEnabled: false, scratchEnabled: true }));
-                      setSubmitError(null);
-                      setSubmitSuccess(null);
-                    }}
-                    className="accent-indigo-600"
-                  />
-                  Scratch
-                </label>
-              </div>
+              {!isEditing ? (
+                <RewardGameModeDisplay
+                  spinEnabled={values.spinEnabled}
+                  scratchEnabled={values.scratchEnabled}
+                />
+              ) : (
+                <RewardGameModeSelector
+                  spinEnabled={values.spinEnabled}
+                  scratchEnabled={values.scratchEnabled}
+                  onSelect={(mode) => {
+                    setValues((s) => ({
+                      ...s,
+                      spinEnabled: mode === "spin",
+                      scratchEnabled: mode === "scratch",
+                    }));
+                    setSubmitError(null);
+                    setSubmitSuccess(null);
+                  }}
+                />
+              )}
             </div>
           </div>
           <FormField label="Reward Config" htmlFor="rewardConfigText">
@@ -1887,6 +1962,14 @@ export function BusinessDetailEditor({
         </FormSection>
 
         <FormSection title="SECTION 5: Channels" description="Enable links and choose exactly one Master QR for the primary scan destination.">
+          {isEditing && masterQrError ? (
+            <p
+              className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
+              role="alert"
+            >
+              {masterQrError}
+            </p>
+          ) : null}
           <div className="grid gap-4 lg:grid-cols-2">
             <ChannelEditor
               label="Instagram"
@@ -1894,6 +1977,7 @@ export function BusinessDetailEditor({
               onToggle={setChannel("instagram", "enabled")}
               onUrl={setChannel("instagram", "url")}
               disabled={!isEditing}
+              urlError={channelErrors.instagram}
               masterSelect={channelMasterSelect(
                 isEditing,
                 (t) => setField("masterQrType")(t),
@@ -2028,6 +2112,7 @@ export function BusinessDetailEditor({
               onToggle={setChannel("facebook", "enabled")}
               onUrl={setChannel("facebook", "url")}
               disabled={!isEditing}
+              urlError={channelErrors.facebook}
               masterSelect={channelMasterSelect(
                 isEditing,
                 (t) => setField("masterQrType")(t),
@@ -2038,11 +2123,28 @@ export function BusinessDetailEditor({
               )}
             />
             <ChannelEditor
+              label="YouTube"
+              channel={values.channels.youtube}
+              onToggle={setChannel("youtube", "enabled")}
+              onUrl={setChannel("youtube", "url")}
+              disabled={!isEditing}
+              urlError={channelErrors.youtube}
+              masterSelect={channelMasterSelect(
+                isEditing,
+                (t) => setField("masterQrType")(t),
+                "youtube",
+                values.masterQrType,
+                values.channels.youtube.enabled === true &&
+                  isSafeYouTubeUrl(values.channels.youtube.url.trim()),
+              )}
+            />
+            <ChannelEditor
               label="Website"
               channel={values.channels.website}
               onToggle={setChannel("website", "enabled")}
               onUrl={setChannel("website", "url")}
               disabled={!isEditing}
+              urlError={channelErrors.website}
               masterSelect={channelMasterSelect(
                 isEditing,
                 (t) => setField("masterQrType")(t),
@@ -2058,6 +2160,7 @@ export function BusinessDetailEditor({
               onToggle={setChannel("x", "enabled")}
               onUrl={setChannel("x", "url")}
               disabled={!isEditing}
+              urlError={channelErrors.x}
               masterSelect={channelMasterSelect(
                 isEditing,
                 (t) => setField("masterQrType")(t),
@@ -2165,6 +2268,7 @@ function ChannelEditor({
   onToggle,
   onUrl,
   disabled,
+  urlError,
   masterSelect,
 }: {
   label: string;
@@ -2172,6 +2276,7 @@ function ChannelEditor({
   onToggle: (next: boolean) => void;
   onUrl: (next: string) => void;
   disabled: boolean;
+  urlError?: string;
   masterSelect?: {
     groupName: string;
     value: MasterQrType;
@@ -2182,13 +2287,14 @@ function ChannelEditor({
 }) {
   return (
     <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
-      <FormField label={`${label} URL`} htmlFor={`${label}-url`}>
+      <FormField label={`${label} URL`} htmlFor={`${label}-url`} error={urlError}>
         <input
           id={`${label}-url`}
+          type="url"
           value={channel.url}
           onChange={(e) => onUrl(e.target.value)}
-          className={formInputBase}
-          disabled={disabled}
+          className={`${formInputBase} ${urlError ? formInputError : ""} disabled:cursor-not-allowed disabled:opacity-60`}
+          disabled={disabled || !channel.enabled}
           placeholder="https://"
         />
       </FormField>
@@ -2361,7 +2467,9 @@ function channelQrIfEnabled(
 ): { label: string; value: string } | null {
   if (!channel.enabled) return null;
   const u = channel.url?.trim() ?? "";
-  if (!u || !isSafeHttpUrl(u)) return null;
+  if (!u) return null;
+  const valid = label === "YouTube" ? isSafeYouTubeUrl(u) : isSafeHttpUrl(u);
+  if (!valid) return null;
   return { label, value: u };
 }
 
@@ -2385,6 +2493,7 @@ function QrLinksCard({
   for (const item of [
     channelQrIfEnabled("Instagram", values.channels.instagram),
     channelQrIfEnabled("Facebook", values.channels.facebook),
+    channelQrIfEnabled("YouTube", values.channels.youtube),
     whatsappQrIfEnabled(values),
     channelQrIfEnabled("Website", values.channels.website),
     channelQrIfEnabled("X", values.channels.x),

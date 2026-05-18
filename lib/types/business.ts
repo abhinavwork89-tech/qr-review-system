@@ -9,7 +9,7 @@ export type BusinessChannelLink = {
 
 export type BusinessChannels = {
   /** Optional top-priority channel key. */
-  primary?: "instagram" | "whatsapp" | "facebook" | "website" | "x";
+  primary?: "instagram" | "whatsapp" | "facebook" | "youtube" | "website" | "x";
   /** Optional game flags stored in channels json. */
   spin_enabled?: boolean;
   scratch_enabled?: boolean;
@@ -17,6 +17,7 @@ export type BusinessChannels = {
   instagram: BusinessChannelLink;
   whatsapp: BusinessChannelLink;
   facebook: BusinessChannelLink;
+  youtube: BusinessChannelLink;
   website: BusinessChannelLink;
   /** X (Twitter); legacy DB may store the same under `twitter`. */
   x: BusinessChannelLink;

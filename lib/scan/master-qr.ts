@@ -1,10 +1,12 @@
 import { isSafeHttpUrl } from "@/lib/review/business-config";
+import { isSafeYouTubeUrl } from "@/lib/review/youtube-url";
 import { resolveWhatsAppHttpsUrl } from "@/lib/whatsapp/wa-me";
 
 export const MASTER_QR_TYPE_VALUES = [
   "google_review",
   "instagram",
   "facebook",
+  "youtube",
   "whatsapp",
   "twitter",
   "website",
@@ -75,6 +77,16 @@ function readEnabledChannelUrl(
   return url.length > 0 && isSafeHttpUrl(url) ? url : null;
 }
 
+function readEnabledYouTubeUrl(channelsRaw: unknown): string | null {
+  if (!channelsRaw || typeof channelsRaw !== "object" || Array.isArray(channelsRaw)) return null;
+  const block = (channelsRaw as Record<string, unknown>).youtube;
+  if (!block || typeof block !== "object" || Array.isArray(block)) return null;
+  const link = block as Record<string, unknown>;
+  if (link.enabled !== true) return null;
+  const url = typeof link.url === "string" ? link.url.trim() : "";
+  return url.length > 0 && isSafeYouTubeUrl(url) ? url : null;
+}
+
 function readXTwitterUrl(channelsRaw: unknown): string | null {
   if (!channelsRaw || typeof channelsRaw !== "object" || Array.isArray(channelsRaw)) return null;
   const o = channelsRaw as Record<string, unknown>;
@@ -107,6 +119,8 @@ export function resolveStrictMasterDestination(row: MasterQrResolutionInput): st
       return readEnabledChannelUrl(row.channels, "instagram");
     case "facebook":
       return readEnabledChannelUrl(row.channels, "facebook");
+    case "youtube":
+      return readEnabledYouTubeUrl(row.channels);
     case "website":
       return readEnabledChannelUrl(row.channels, "website");
     case "twitter":
@@ -138,6 +152,7 @@ export function computeDefaultMasterQrType(input: DefaultInput): MasterQrType {
   if (googleHttps(input.google_url)) return "google_review";
   if (readEnabledChannelUrl(input.channels, "instagram")) return "instagram";
   if (readEnabledChannelUrl(input.channels, "facebook")) return "facebook";
+  if (readEnabledYouTubeUrl(input.channels)) return "youtube";
   if (whatsappOutbound(input)) return "whatsapp";
   if (readXTwitterUrl(input.channels)) return "twitter";
   if (readEnabledChannelUrl(input.channels, "website")) return "website";
@@ -193,6 +208,7 @@ export function resolvePersistedMasterQrType(
     "google_review",
     "instagram",
     "facebook",
+    "youtube",
     "whatsapp",
     "twitter",
     "website",
@@ -211,6 +227,8 @@ export function formatMasterQrTypeLabel(t: MasterQrType): string {
       return "Google Review";
     case "twitter":
       return "X (Twitter)";
+    case "youtube":
+      return "YouTube";
     default:
       return t.charAt(0).toUpperCase() + t.slice(1);
   }

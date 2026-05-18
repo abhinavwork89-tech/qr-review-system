@@ -46,7 +46,7 @@ export function BusinessBrandHeader({
           {/* <p className="text-[11px] font-medium uppercase tracking-wider text-[var(--review-muted)] sm:text-xs">
             {t("header.leaveReview")}
           </p> */}
-          <h1 className="truncate text-lg font-semibold leading-snug tracking-tight text-white sm:text-base">
+          <h1 className="truncate text-md font-semibold leading-snug tracking-tight text-white sm:text-base">
             {name}
           </h1>
         </div>

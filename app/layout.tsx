@@ -1,15 +1,9 @@
 import type { Metadata } from "next";
-import { Poppins  } from "next/font/google";
 import { Suspense } from "react";
 import { GlobalPageLoader } from "@/components/ui/global-page-loader";
+import { poppins } from "@/lib/fonts/poppins";
 import "./globals.css";
 import "./assets/styles/mainStyle.scss";
-
-const poppins = Poppins({
-   subsets: ["latin"],
-  weight: ["300", "400", "500", "600", "700"],
-  variable: "--font-poppins",
-});
 
 export const metadata: Metadata = {
   title: {
@@ -25,11 +19,10 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html
-      lang="en"
-      className={`${poppins.variable} ${poppins.variable} h-full antialiased`}
-    >
-      <body className="min-h-full flex flex-col">
+    <html lang="en" className={`${poppins.variable} h-full`}>
+      <body
+        className={`${poppins.className} min-h-full flex flex-col font-sans antialiased`}
+      >
         <Suspense fallback={null}>
           <GlobalPageLoader />
         </Suspense>

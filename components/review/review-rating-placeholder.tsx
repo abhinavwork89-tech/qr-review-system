@@ -510,7 +510,7 @@ export function ReviewRatingPlaceholder({
       } else {
         persistReviewSubmission({ rating, review_text: safeReview });
 
-        playReviewSubmitSuccessConfetti();
+        requestAnimationFrame(() => playReviewSubmitSuccessConfetti());
 
         setSubmitted(true);
         setClipboardWarning(false);

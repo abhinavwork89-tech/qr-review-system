@@ -1,6 +1,15 @@
 import type { BusinessChannels } from "@/lib/types/business";
+import { isSafeYouTubeUrl } from "@/lib/review/youtube-url";
 
-type ChannelKey = "instagram" | "whatsapp" | "facebook" | "website" | "x";
+export type PublicChannelKey =
+  | "instagram"
+  | "whatsapp"
+  | "facebook"
+  | "youtube"
+  | "website"
+  | "x";
+
+type ChannelKey = PublicChannelKey;
 
 export type PrioritizedChannel = {
   key: ChannelKey;
@@ -11,9 +20,25 @@ const CHANNEL_ORDER: ChannelKey[] = [
   "instagram",
   "whatsapp",
   "facebook",
+  "youtube",
   "website",
   "x",
 ];
+
+/** Fixed UI order for the public review “Connect” row (no primary/secondary split). */
+export const PUBLIC_CHANNEL_DISPLAY_ORDER: PublicChannelKey[] = [
+  "whatsapp",
+  "website",
+  "instagram",
+  "facebook",
+  "youtube",
+  "x",
+];
+
+function isChannelUrlValid(key: ChannelKey, url: string): boolean {
+  if (key === "youtube") return isSafeYouTubeUrl(url);
+  return isSafeHttpUrl(url);
+}
 
 export function isSafeHttpUrl(value: string): boolean {
   const trimmed = value.trim();
@@ -70,7 +95,7 @@ export function getPrioritizedChannels(
 
   const items = CHANNEL_ORDER.flatMap((key, index) => {
     const channel = channels[key];
-    if (!channel || channel.enabled !== true || !isSafeHttpUrl(channel.url)) {
+    if (!channel || channel.enabled !== true || !isChannelUrlValid(key, channel.url)) {
       return [];
     }
     const isPrimary = explicitPrimary ? explicitPrimary === key : channel.primary === true;
@@ -83,6 +108,20 @@ export function getPrioritizedChannels(
   });
 
   return items.map(({ key, url }) => ({ key, url }));
+}
+
+/** Enabled public channels in display order (for unified contact icon row). */
+export function getEnabledPublicChannels(
+  channels: BusinessChannels | null,
+): PrioritizedChannel[] {
+  if (!channels) return [];
+  return PUBLIC_CHANNEL_DISPLAY_ORDER.flatMap((key) => {
+    const channel = channels[key];
+    if (!channel || channel.enabled !== true || !isChannelUrlValid(key, channel.url)) {
+      return [];
+    }
+    return [{ key, url: channel.url.trim() }];
+  });
 }
 
 export function getPreferredPublicUrl(input: {
@@ -127,6 +166,8 @@ function toChannelLabel(key: ChannelKey): string {
       return "WhatsApp";
     case "facebook":
       return "Facebook";
+    case "youtube":
+      return "YouTube";
     case "website":
       return "Website";
     case "x":

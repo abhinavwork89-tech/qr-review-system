@@ -40,7 +40,7 @@ $template-width: 480px;
   --light-gray-bg: #ffffff17;
   --green: #0d940d;
   --border-gray: #DBDBDB;
-  --fontFamily: "Poppins", sans-serif;
+  --fontFamily: var(--font-poppins), sans-serif;
   --gradient_pink: #FF1CF7;
   --gradient_blue: #00F0FF;
   --theme_Gradient: linear-gradient(45deg, var(--gradient_pink), var(--gradient_blue));
