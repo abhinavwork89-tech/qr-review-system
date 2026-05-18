@@ -58,10 +58,10 @@ import type { AiReviewLanguage } from "@/lib/ai/constants";
 import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
 
 const suggestionBtnClass = (selected: boolean) =>
-  `w-full rounded-xl border px-4 py-3.5 text-left text-sm leading-snug transition-[transform,box-shadow,border-color,background-color] duration-200 ease-out motion-reduce:transition-none active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50 sm:py-4 ${
+  `review-btn w-full rounded-xl  px-4 py-3 text-left text-sm leading-snug transition-[transform,box-shadow,border-color,background-color] border-2 border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] duration-200 ease-out motion-reduce:transition-none active:scale-[0.98] disabled:pointer-events-none disabled:opacity-50  ${
     selected
-      ? "border-[var(--review-primary)] bg-[color-mix(in_srgb,var(--review-bg)_82%,var(--review-primary)_12%)] shadow-[0_0_0_2px_var(--review-primary)]"
-      : "border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] hover:border-[color-mix(in_srgb,var(--review-primary)_45%,transparent)] hover:bg-[color-mix(in_srgb,var(--review-bg)_90%,var(--review-primary)_6%)]"
+      ? "selected-review "
+      : "xc"
   } text-[var(--review-fg)]`;
 
 export type ReviewRatingPlaceholderProps = {
@@ -510,7 +510,7 @@ export function ReviewRatingPlaceholder({
       } else {
         persistReviewSubmission({ rating, review_text: safeReview });
 
-        playReviewSubmitSuccessConfetti();
+        requestAnimationFrame(() => playReviewSubmitSuccessConfetti());
 
         setSubmitted(true);
         setClipboardWarning(false);
@@ -643,10 +643,10 @@ export function ReviewRatingPlaceholder({
   }, []);
 
   const inputClass =
-    "mt-1.5 w-full rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_98%,var(--review-fg))] px-3 py-2.5 text-sm text-[var(--review-fg)] outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-[var(--review-muted)] focus:border-[var(--review-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] disabled:cursor-not-allowed disabled:opacity-60";
+    "mt-1.5 w-full rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-white px-3 py-2.5 text-sm text-[var(--review-fg)] outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-[var(--review-muted)] focus:border-[var(--review-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] disabled:cursor-not-allowed disabled:opacity-60";
 
   const selectClass =
-    "mt-1.5 w-[100px] rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_98%,var(--review-fg))] px-3 py-2.5 text-sm text-[var(--review-fg)] outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-[var(--review-muted)] focus:border-[var(--review-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] disabled:cursor-not-allowed disabled:opacity-60";
+    "mt-1.5 w-[100px] rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-white px-3 py-2.5 text-sm text-[var(--review-fg)] outline-none transition-[border-color,box-shadow] duration-200 placeholder:text-[var(--review-muted)] focus:border-[var(--review-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] disabled:cursor-not-allowed disabled:opacity-60";
 
   const ratingStarsLabel =
     rating > 0 ? (rating === 1 ? t("rating.starOne") : t("rating.starsMany", { n: rating })) : t("rating.dash");
@@ -673,10 +673,10 @@ export function ReviewRatingPlaceholder({
   if (flow === "thanks_internal") {
     return (
       <section
-        className="rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
+        className="thankyou-feedback-section w-full  rounded-none sm:rounded-2xl bg-white p-4 box-shadow sm:p-5"
         aria-label={t("rating.thanksAria")}
       >
-        <div className="rounded-2xl border border-[color-mix(in_srgb,var(--review-primary)_28%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_78%,var(--review-primary)_14%)] px-4 py-8 text-center sm:px-6 sm:py-10">
+        <div className="rounded-2xl border border-[color-mix(in_srgb,var(--review-primary)_28%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_78%,var(--review-primary)_14%)] px-2 py-4 text-center sm:px-6 sm:py-10">
           <p className="text-base font-semibold text-[var(--review-fg)] sm:text-lg">
             {t("rating.thanksTitle")}
           </p>
@@ -745,22 +745,19 @@ export function ReviewRatingPlaceholder({
 
   return (
     <section
-      className="rounded-2xl border border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_94%,var(--review-fg))] p-4 shadow-sm sm:p-5"
-      aria-labelledby="rating-heading"
+    className="clint-rating w-full  rounded-none sm:rounded-2xl bg-white p-4 box-shadow sm:p-5"  
+    aria-labelledby="rating-heading"
       aria-busy={isSubmitting}
     >
-      <div className="border-l-[3px] border-[var(--review-secondary)] pl-3 sm:pl-4">
-        <h2
-          id="rating-heading"
-          className="text-sm font-semibold text-[var(--review-fg)] sm:text-base"
-        >
+        <div className="w-full section-head ">
+        <h2 className="text-base sm:text-start font-semibold text-[var(--review-fg)]">
           {t("rating.yourRating")}
         </h2>
-        <p className="mt-0.5 text-xs leading-relaxed text-[var(--review-muted)]">
-          {t("rating.tapStars")}
+        <p className="mt-0.5  text-sm leading-relaxed text-[var(--review-muted)]">
+           {t("rating.tapStars")}
         </p>
       </div>
-      <div className="mt-5 flex justify-center">
+      <div className="mt-3 flex justify-center">
         <StarRating
           label={t("rating.starGroupLabel")}
           value={rating}
@@ -786,20 +783,17 @@ export function ReviewRatingPlaceholder({
         <div className="min-h-0">
           <div className="mt-5 space-y-4">
             <div>
-              <div className="flex flex-wrap items-center gap-2">
-                <h3
-                  id={`${id}-options-label`}
-                  className="text-xs font-medium text-[var(--review-fg)] sm:text-sm"
-                >
+             <div className="w-full section-head ">
+                 <h2  id={`${id}-options-label`} className="text-base sm:text-start font-semibold text-[var(--review-fg)]">
                   {optionsTitle}
-                </h3>
+                </h2>
                 {showingAiCards && aiSuggest.wasCached ? (
-                  <span className="rounded-full border border-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_88%,var(--review-primary)_10%)] px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-[var(--review-primary)]">
+                   <p className="mt-0.5  text-sm leading-relaxed text-[var(--review-muted)]">
                     {t("rating.aiInstantBadge")}
-                  </span>
+                  </p>
                 ) : null}
+                <p className="mt-0.5  text-sm leading-relaxed text-[var(--review-muted)]">{optionsHint}</p>
               </div>
-              <p className="mt-0.5 text-xs text-[var(--review-muted)]">{optionsHint}</p>
             </div>
 
             {aiNotice ? (
@@ -826,7 +820,7 @@ export function ReviewRatingPlaceholder({
                     : t("rating.aiGenerating")}
                 </p>
                 {aiSuggest.phase === "fetching" && aiSuggest.showFetchSkeleton ? (
-                  <p className="text-[11px] text-[var(--review-muted)]">
+                  <p className="text-sm mt-0.5 text-[var(--review-muted)]">
                     {t("rating.aiGeneratingSub")}
                   </p>
                 ) : null}
@@ -864,7 +858,7 @@ export function ReviewRatingPlaceholder({
             <div>
               <label
                 htmlFor={`${id}-review`}
-                className="text-xs font-medium text-[var(--review-fg)] sm:text-sm"
+                className="text-sm font-medium text-[var(--review-fg)] sm:text-sm"
               >
                 {t("rating.yourReview")}
               </label>
@@ -888,7 +882,7 @@ export function ReviewRatingPlaceholder({
                 readOnly={submitted || isSubmitting}
                 rows={4}
                 placeholder={t("rating.reviewPlaceholder")}
-                className="mt-2 w-full scroll-mt-4 resize-y rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_98%,var(--review-fg))] px-3 py-3 text-base leading-relaxed text-[var(--review-fg)] outline-none transition-[border-color,box-shadow,min-height] duration-200 read-only:cursor-default read-only:opacity-90 placeholder:text-[var(--review-muted)] focus:border-[var(--review-primary)] focus:ring-2 focus:ring-[color-mix(in_srgb,var(--review-primary)_35%,transparent)] disabled:cursor-not-allowed disabled:opacity-60 sm:text-sm"
+                className="review-textarea mt-2 w-full scroll-mt-4 resize-y rounded-xl border-2 border-[color-mix(in_srgb,var(--review-fg)_12%,transparent)]  bg-white px-3 py-3 text-sm leading-relaxed text-[var(--review-fg)] outline-none transition-[border-color,box-shadow,min-height] duration-200 read-only:cursor-default read-only:opacity-90 placeholder:text-[var(--review-muted)]   disabled:cursor-not-allowed disabled:opacity-60"
               />
             </div>
 

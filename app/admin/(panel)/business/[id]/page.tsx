@@ -142,6 +142,7 @@ export default async function BusinessDetailPage({ params, searchParams }: PageP
           instagram: readChannel(channels.instagram),
           whatsapp: readChannel(channels.whatsapp),
           facebook: readChannel(channels.facebook),
+          youtube: readChannel(channels.youtube),
           website: readChannel(channels.website),
           x: readChannel(
             channels.x !== undefined && channels.x !== null

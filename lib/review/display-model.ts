@@ -118,7 +118,7 @@ function parseChannels(raw: unknown): BusinessChannels | null {
   const primaryRaw =
     typeof o.primary === "string" ? o.primary.trim().toLowerCase() : "";
   const normalizedPrimary = primaryRaw === "twitter" ? "x" : primaryRaw;
-  const primary = ["instagram", "whatsapp", "facebook", "website", "x"].includes(
+  const primary = ["instagram", "whatsapp", "facebook", "youtube", "website", "x"].includes(
     normalizedPrimary,
   )
     ? (normalizedPrimary as BusinessChannels["primary"])
@@ -134,6 +134,7 @@ function parseChannels(raw: unknown): BusinessChannels | null {
     instagram: link("instagram"),
     whatsapp: link("whatsapp"),
     facebook: link("facebook"),
+    youtube: link("youtube"),
     website: link("website"),
     x: parseXFromChannels(o),
   };

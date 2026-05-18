@@ -24,7 +24,7 @@ import type { ReviewDisplayModel } from "@/lib/review/display-model";
 function PromotionsSection({ banners }: { banners: BannerSlide[] }) {
   const t = useReviewT();
   return (
-    <section aria-label={t("promotions.aria")} className="w-full">
+    <section aria-label={t("promotions.aria")} className="w-full promotions-banner">
       {banners.length > 0 ? (
         <BannerSlider
           banners={banners}
@@ -50,6 +50,7 @@ export function ReviewExperienceClient({
   settings: AppSettingsPublic;
 }) {
   const switcher: ReactNode = <ReviewLanguageSwitcher />;
+  console.log(display, "display")
 
   return (
     <ReviewI18nProvider businessDefaultLocale={display.language} slug={slug}>
@@ -67,8 +68,8 @@ export function ReviewExperienceClient({
         pageSlug={slug}
       />
 
-      <div className="mx-auto w-full max-w-lg flex-1 px-4 pb-8 pt-5 sm:px-5 sm:pb-10 sm:pt-6">
-        <div className="flex flex-col gap-8 sm:gap-10">
+      <div className="lang-update mx-auto w-full max-w-lg flex-1 px-4 pb-8 pt-5 sm:px-5 sm:pb-10 sm:pt-6">
+        <div className="flex flex-col gap-5 sm:gap-10">
           <PromotionsSection banners={display.banners} />
 
           <section className="w-full">

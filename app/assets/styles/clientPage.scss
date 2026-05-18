@@ -1,0 +1,45 @@
+.section-head {
+    p,
+    h2 {
+        text-align: left;
+
+        @media only screen and (max-width: $mobile) {
+            text-align: center;
+        }
+    }
+}
+
+.reward-banner {
+    position: relative;
+
+    img.reward-banner-img {}
+
+    button.reward-btn {
+        position: absolute;
+        bottom: 5px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 7px 20px;
+        justify-content: center;
+        font-size: 12px;
+        font-weight: 600;
+
+        img {
+            height: 20px;
+        }
+    }
+}
+
+.review-btn{
+    background-color: #f9f9f9;
+    &.selected-review{
+        border-color: var(--review-primary);
+        background-color: var(--white);
+    }
+
+}
+.review-textarea{
+    &:focus{
+        border-color: var(--review-primary);
+    }
+}

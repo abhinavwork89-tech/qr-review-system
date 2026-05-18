@@ -83,7 +83,15 @@ export function sanitizeBusinessChannels(
     return channels;
   }
   const out: Record<string, unknown> = { ...channels };
-  const linkKeys = ["instagram", "whatsapp", "facebook", "website", "x", "twitter"] as const;
+  const linkKeys = [
+    "instagram",
+    "whatsapp",
+    "facebook",
+    "youtube",
+    "website",
+    "x",
+    "twitter",
+  ] as const;
   for (const key of linkKeys) {
     const block = out[key];
     if (block && typeof block === "object" && !Array.isArray(block)) {
