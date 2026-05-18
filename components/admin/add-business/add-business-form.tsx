@@ -8,6 +8,7 @@ import { FileUploadField } from "@/components/admin/add-business/file-upload-fie
 import { FormField } from "@/components/admin/add-business/form-field";
 import { FormSection } from "@/components/admin/add-business/form-section";
 import { FormToggle } from "@/components/admin/add-business/form-toggle";
+import { RewardGameModeSelector } from "@/components/admin/business/reward-game-mode-display";
 import { formInputBase, formInputError, formSelectBase } from "@/components/admin/add-business/form-styles";
 import { validateAndMergeFiles, BUSINESS_IMAGE_ACCEPT } from "@/components/admin/add-business/upload-utils";
 import {
@@ -56,6 +57,14 @@ import {
 } from "@/lib/scan/master-qr";
 import { defaultSuggestionsForPlan } from "@/lib/ai/suggestions-by-plan";
 import { adminAiLabels } from "@/lib/i18n/admin-ai-labels";
+import {
+  validateAiDailyLimit,
+  validateAiSuggestionsCount,
+  validateMasterQrSelection,
+  validateOptionalGoogleUrl,
+  validateSocialChannelUrl,
+  validateYouTubeChannelUrl,
+} from "@/lib/admin/business-form-validation";
 
 type Errors = Partial<Record<string, string>>;
 type Touched = Partial<
@@ -114,6 +123,7 @@ function normalizeForSubmit(values: FormValues): FormValues {
     rewardConfigText: normalizeRewardConfigLines(values.rewardConfigText),
     instagramUrl: normalizeSafeHttpUrl(values.instagramUrl),
     facebookUrl: normalizeSafeHttpUrl(values.facebookUrl),
+    youtubeUrl: normalizeSafeHttpUrl(values.youtubeUrl),
     websiteUrl: normalizeSafeHttpUrl(values.websiteUrl),
     xUrl: normalizeSafeHttpUrl(values.xUrl),
     whatsappCountryCode: normalizeDialCode(values.whatsappCountryCode || DEFAULT_DIAL_CODE),
@@ -174,7 +184,8 @@ function validate(
   if (mobileError) e.mobile = mobileError;
 
   if (!values.businessType.trim()) e.businessType = "Please select a business type";
-  if (googleReviewUrl && !isSafeHttpUrl(googleReviewUrl)) e.googleReviewUrl = "Enter a valid URL";
+  const googleErr = validateOptionalGoogleUrl(googleReviewUrl);
+  if (googleErr) e.googleReviewUrl = googleErr;
 
   if (values.instagramEnabled && !values.instagramUrl.trim())
     e.instagramUrl = "URL is required when this channel is enabled";
@@ -202,18 +213,19 @@ function validate(
     if (cE.callCountryCode) e.callCountryCode = cE.callCountryCode;
     if (cE.callNumber) e.callNumber = cE.callNumber;
   }
-  if (values.facebookEnabled && !values.facebookUrl.trim())
-    e.facebookUrl = "URL is required when this channel is enabled";
-  else if (values.facebookEnabled && !isSafeHttpUrl(values.facebookUrl))
-    e.facebookUrl = "Enter a valid URL";
-  if (values.websiteEnabled && !values.websiteUrl.trim())
-    e.websiteUrl = "URL is required when this channel is enabled";
-  else if (values.websiteEnabled && !isSafeHttpUrl(values.websiteUrl))
-    e.websiteUrl = "Enter a valid URL";
-  if (values.xEnabled && !values.xUrl.trim())
-    e.xUrl = "URL is required when this channel is enabled";
-  else if (values.xEnabled && !isSafeHttpUrl(values.xUrl))
-    e.xUrl = "Enter a valid URL";
+  const instagramUrlErr = validateSocialChannelUrl(
+    values.instagramEnabled,
+    values.instagramUrl,
+  );
+  if (instagramUrlErr) e.instagramUrl = instagramUrlErr;
+  const facebookUrlErr = validateSocialChannelUrl(values.facebookEnabled, values.facebookUrl);
+  if (facebookUrlErr) e.facebookUrl = facebookUrlErr;
+  const youtubeUrlErr = validateYouTubeChannelUrl(values.youtubeEnabled, values.youtubeUrl);
+  if (youtubeUrlErr) e.youtubeUrl = youtubeUrlErr;
+  const websiteUrlErr = validateSocialChannelUrl(values.websiteEnabled, values.websiteUrl);
+  if (websiteUrlErr) e.websiteUrl = websiteUrlErr;
+  const xUrlErr = validateSocialChannelUrl(values.xEnabled, values.xUrl);
+  if (xUrlErr) e.xUrl = xUrlErr;
 
   const idType = parseIdentityTypeInput(values.identityType) || null;
   const idErrs = getIdentityFieldErrors(idType, values.identityNumber);
@@ -227,25 +239,16 @@ function validate(
   if (docErrs.identity_proof_urls) e.identity_proof_urls = docErrs.identity_proof_urls;
   if (docErrs.client_photo_url) e.client_photo_url = docErrs.client_photo_url;
 
-  const masterErr = validateMasterQrForPersist({
-    ...masterBaseFromFormValues(values),
-    master_qr_type: values.masterQrType,
-  });
+  const masterErr = validateMasterQrSelection(
+    masterBaseFromFormValues(values),
+    values.masterQrType,
+  );
   if (masterErr) e.masterQrType = masterErr;
 
-  const aiDailyParsed = Number.parseInt(values.aiDailyLimit.replace(/\D/g, ""), 10);
-  if (
-    values.aiDailyLimit.trim() &&
-    (!Number.isFinite(aiDailyParsed) || aiDailyParsed < 1 || aiDailyParsed > 50000)
-  ) {
-    e.aiDailyLimit = "Enter a daily limit from 1 to 50000";
-  }
-  if (values.aiSuggestionsCount.trim()) {
-    const s = Number.parseInt(values.aiSuggestionsCount.trim(), 10);
-    if (!Number.isInteger(s) || s < 1 || s > 20) {
-      e.aiSuggestionsCount = "Use 1–20 or leave blank for plan default";
-    }
-  }
+  const aiDailyErr = validateAiDailyLimit(values.aiDailyLimit);
+  if (aiDailyErr) e.aiDailyLimit = aiDailyErr;
+  const aiSuggestionsErr = validateAiSuggestionsCount(values.aiSuggestionsCount);
+  if (aiSuggestionsErr) e.aiSuggestionsCount = aiSuggestionsErr;
 
   return e;
 }
@@ -259,6 +262,7 @@ function channelsObjectForMaster(v: FormValues) {
     instagram: { enabled: v.instagramEnabled, url: v.instagramUrl },
     whatsapp: { enabled: v.whatsappEnabled, url: "" },
     facebook: { enabled: v.facebookEnabled, url: v.facebookUrl },
+    youtube: { enabled: v.youtubeEnabled, url: v.youtubeUrl },
     website: { enabled: v.websiteEnabled, url: v.websiteUrl },
     x: { enabled: v.xEnabled, url: v.xUrl },
   };
@@ -300,6 +304,8 @@ type FormValues = {
   whatsappEnabled: boolean;
   facebookUrl: string;
   facebookEnabled: boolean;
+  youtubeUrl: string;
+  youtubeEnabled: boolean;
   websiteUrl: string;
   websiteEnabled: boolean;
   xUrl: string;
@@ -340,6 +346,8 @@ const initialValues: FormValues = {
   whatsappEnabled: false,
   facebookUrl: "",
   facebookEnabled: false,
+  youtubeUrl: "",
+  youtubeEnabled: false,
   websiteUrl: "",
   websiteEnabled: false,
   xUrl: "",
@@ -551,6 +559,84 @@ export function AddBusinessForm({
   }, [values.callEnabled, values.callCountryCode, values.callNumber]);
 
   useEffect(() => {
+    const norm = normalizeForSubmit(values);
+    queueMicrotask(() => {
+      setErrors((prev) => {
+        const next = { ...prev };
+        const apply = (key: keyof Errors, err: string | undefined) => {
+          if (err) next[key] = err;
+          else delete next[key];
+        };
+        apply(
+          "instagramUrl",
+          validateSocialChannelUrl(norm.instagramEnabled, norm.instagramUrl),
+        );
+        apply(
+          "facebookUrl",
+          validateSocialChannelUrl(norm.facebookEnabled, norm.facebookUrl),
+        );
+        apply(
+          "youtubeUrl",
+          validateYouTubeChannelUrl(norm.youtubeEnabled, norm.youtubeUrl),
+        );
+        apply(
+          "websiteUrl",
+          validateSocialChannelUrl(norm.websiteEnabled, norm.websiteUrl),
+        );
+        apply("xUrl", validateSocialChannelUrl(norm.xEnabled, norm.xUrl));
+        apply(
+          "masterQrType",
+          validateMasterQrSelection(masterBaseFromFormValues(norm), norm.masterQrType),
+        );
+        return next;
+      });
+    });
+  }, [
+    values.instagramEnabled,
+    values.instagramUrl,
+    values.facebookEnabled,
+    values.facebookUrl,
+    values.youtubeEnabled,
+    values.youtubeUrl,
+    values.websiteEnabled,
+    values.websiteUrl,
+    values.xEnabled,
+    values.xUrl,
+    values.masterQrType,
+    values.googleReviewUrl,
+    values.whatsappEnabled,
+    values.whatsappCountryCode,
+    values.whatsappNumber,
+  ]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setErrors((prev) => {
+        const next = { ...prev };
+        const dl = validateAiDailyLimit(values.aiDailyLimit);
+        const sc = validateAiSuggestionsCount(values.aiSuggestionsCount);
+        if (dl) next.aiDailyLimit = dl;
+        else delete next.aiDailyLimit;
+        if (sc) next.aiSuggestionsCount = sc;
+        else delete next.aiSuggestionsCount;
+        return next;
+      });
+    });
+  }, [values.aiDailyLimit, values.aiSuggestionsCount]);
+
+  useEffect(() => {
+    queueMicrotask(() => {
+      setErrors((prev) => {
+        const next = { ...prev };
+        const err = validateOptionalGoogleUrl(values.googleReviewUrl);
+        if (err) next.googleReviewUrl = err;
+        else delete next.googleReviewUrl;
+        return next;
+      });
+    });
+  }, [values.googleReviewUrl]);
+
+  useEffect(() => {
     const v = valuesRef.current;
     const base = masterBaseFromFormValues(v);
     if (validateMasterQrForPersist({ ...base, master_qr_type: v.masterQrType }) === null) {
@@ -569,6 +655,8 @@ export function AddBusinessForm({
     values.whatsappNumber,
     values.facebookEnabled,
     values.facebookUrl,
+    values.youtubeEnabled,
+    values.youtubeUrl,
     values.websiteEnabled,
     values.websiteUrl,
     values.xEnabled,
@@ -590,10 +678,21 @@ export function AddBusinessForm({
     "callCountryCode",
     "callNumber",
     "facebookUrl",
+    "youtubeUrl",
     "websiteUrl",
     "xUrl",
     "masterQrType",
+    "aiDailyLimit",
+    "aiSuggestionsCount",
   ];
+
+  const channelEnableToUrl: Partial<Record<keyof FormValues, keyof FormValues>> = {
+    instagramEnabled: "instagramUrl",
+    facebookEnabled: "facebookUrl",
+    youtubeEnabled: "youtubeUrl",
+    websiteEnabled: "websiteUrl",
+    xEnabled: "xUrl",
+  };
 
   const setRewardGame = (mode: "none" | "spin" | "scratch") => {
     setValues((s) => ({
@@ -647,8 +746,21 @@ export function AddBusinessForm({
 
       setValues((s) => {
         const nextValues = { ...s, [key]: v };
-        if (validatedFieldKeys.includes(key)) {
-          setTouched((prev) => (prev[key] ? prev : { ...prev, [key]: true }));
+        const urlKeyFromEnable = channelEnableToUrl[key];
+        const keysToValidate: (keyof FormValues)[] = validatedFieldKeys.includes(key)
+          ? [key]
+          : urlKeyFromEnable
+            ? [urlKeyFromEnable]
+            : [];
+        if (keysToValidate.length > 0) {
+          setTouched((prev) => {
+            const next = { ...prev };
+            for (const k of keysToValidate) {
+              if (!next[k]) next[k] = true;
+            }
+            if (urlKeyFromEnable) next[urlKeyFromEnable] = true;
+            return next;
+          });
           const normalized = normalizeForSubmit(nextValues);
           const allErrs = validate(
             normalized,
@@ -657,9 +769,11 @@ export function AddBusinessForm({
           );
           setErrors((prev) => {
             const next = { ...prev };
-            const fieldError = allErrs[key];
-            if (fieldError) next[key as string] = fieldError;
-            else delete next[key as string];
+            for (const k of keysToValidate) {
+              const fieldError = allErrs[k as string];
+              if (fieldError) next[k as string] = fieldError;
+              else delete next[k as string];
+            }
             return next;
           });
         }
@@ -868,6 +982,10 @@ export function AddBusinessForm({
           facebook: {
             enabled: normalizedValues.facebookEnabled,
             url: normalizedValues.facebookUrl,
+          },
+          youtube: {
+            enabled: normalizedValues.youtubeEnabled,
+            url: normalizedValues.youtubeUrl,
           },
           website: {
             enabled: normalizedValues.websiteEnabled,
@@ -1504,38 +1622,11 @@ export function AddBusinessForm({
             />
             <div className="sm:col-span-2 space-y-2 rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
               <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Reward game</p>
-              <div className="flex flex-wrap gap-4 text-sm text-zinc-700 dark:text-zinc-300">
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  <input
-                    type="radio"
-                    name="rewardGameModeAdd"
-                    checked={!values.spinEnabled && !values.scratchEnabled}
-                    onChange={() => setRewardGame("none")}
-                    className="accent-indigo-600"
-                  />
-                  None
-                </label>
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  <input
-                    type="radio"
-                    name="rewardGameModeAdd"
-                    checked={values.spinEnabled}
-                    onChange={() => setRewardGame("spin")}
-                    className="accent-indigo-600"
-                  />
-                  Spin
-                </label>
-                <label className="inline-flex cursor-pointer items-center gap-2">
-                  <input
-                    type="radio"
-                    name="rewardGameModeAdd"
-                    checked={values.scratchEnabled}
-                    onChange={() => setRewardGame("scratch")}
-                    className="accent-indigo-600"
-                  />
-                  Scratch
-                </label>
-              </div>
+              <RewardGameModeSelector
+                spinEnabled={values.spinEnabled}
+                scratchEnabled={values.scratchEnabled}
+                onSelect={setRewardGame}
+              />
             </div>
           </div>
           <FormField

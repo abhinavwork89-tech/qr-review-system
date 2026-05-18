@@ -3,6 +3,7 @@ export const SCAN_QR_TYPES = [
   "google",
   "instagram",
   "facebook",
+  "youtube",
   "whatsapp",
   "website",
   "x",
@@ -30,6 +31,7 @@ export function adminQrLabelToScanType(label: string): ScanQrType | null {
   if (key === "google") return "google";
   if (key === "instagram") return "instagram";
   if (key === "facebook") return "facebook";
+  if (key === "youtube") return "youtube";
   if (key === "whatsapp") return "whatsapp";
   if (key === "website") return "website";
   if (key === "x") return "x";
@@ -42,6 +44,7 @@ export function reviewSourceLabelToScanType(label: string): ScanQrType {
   const key = label.trim().toLowerCase();
   if (key === "instagram") return "instagram";
   if (key === "facebook") return "facebook";
+  if (key === "youtube") return "youtube";
   if (key === "whatsapp") return "whatsapp";
   if (key === "website") return "website";
   if (key === "x") return "x";

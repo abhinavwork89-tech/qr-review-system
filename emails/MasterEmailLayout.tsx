@@ -2,6 +2,7 @@ import {
   Body,
   Button,
   Container,
+  Font,
   Head,
   Heading,
   Hr,
@@ -12,6 +13,7 @@ import {
   Text,
 } from "@react-email/components";
 import type { MasterEmailLayoutProps } from "@/emails/types";
+import { POPPINS_EMAIL_FONT_FAMILY } from "@/lib/fonts/constants";
 
 const pageBg = "#f4f4f5";
 const cardBg = "#ffffff";
@@ -42,15 +44,45 @@ export function MasterEmailLayout({
 
   return (
     <Html lang="en">
-      <Head />
+      <Head>
+        <Font
+          fontFamily="Poppins"
+          fallbackFontFamily="Helvetica"
+          webFont={{
+            url: "https://fonts.gstatic.com/s/poppins/v22/pxiEyp8kv8JHgFVrJJfecg.woff2",
+            format: "woff2",
+          }}
+          fontWeight={400}
+          fontStyle="normal"
+        />
+        <Font
+          fontFamily="Poppins"
+          fallbackFontFamily="Helvetica"
+          webFont={{
+            url: "https://fonts.gstatic.com/s/poppins/v22/pxiByp8kv8JHgFVrLEj6Z1xlFQ.woff2",
+            format: "woff2",
+          }}
+          fontWeight={600}
+          fontStyle="normal"
+        />
+        <Font
+          fontFamily="Poppins"
+          fallbackFontFamily="Helvetica"
+          webFont={{
+            url: "https://fonts.gstatic.com/s/poppins/v22/pxiByp8kv8JHgFVrLCz7Z1xlFQ.woff2",
+            format: "woff2",
+          }}
+          fontWeight={700}
+          fontStyle="normal"
+        />
+      </Head>
       {previewText ? <Preview>{previewText}</Preview> : null}
       <Body
         style={{
           margin: 0,
           padding: "24px 12px",
           backgroundColor: pageBg,
-          fontFamily:
-            '-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif',
+          fontFamily: POPPINS_EMAIL_FONT_FAMILY,
         }}
       >
         <Container

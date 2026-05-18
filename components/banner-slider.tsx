@@ -212,7 +212,7 @@ export function BannerSlider({
               aria-label={`Go to slide ${i + 1}`}
               className={`h-1.5 rounded-full transition-[width,background-color] duration-300 ${
                 i === activeIndex
-                  ? "w-6 bg-zinc-800 dark:bg-zinc-200"
+                  ? "w-6 bg-[var(--review-primary)]"
                   : "w-1.5 bg-zinc-300 hover:bg-zinc-400 dark:bg-zinc-600 dark:hover:bg-zinc-500"
               }`}
               onClick={() => setIndex(i)}

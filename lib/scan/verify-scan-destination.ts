@@ -41,6 +41,7 @@ function readChannels(raw: unknown): BusinessChannels | null {
   const instagram = readLink("instagram");
   const whatsapp = readLink("whatsapp");
   const facebook = readLink("facebook");
+  const youtube = readLink("youtube");
   const website = readLink("website");
   const x =
     readLink("x") ??
@@ -54,12 +55,13 @@ function readChannels(raw: unknown): BusinessChannels | null {
       return url && isSafeHttpUrl(url) ? url : null;
     })();
 
-  if (!instagram && !whatsapp && !facebook && !website && !x) return null;
+  if (!instagram && !whatsapp && !facebook && !youtube && !website && !x) return null;
 
   const base: BusinessChannels = {
     instagram: { enabled: !!instagram, url: instagram ?? "" },
     whatsapp: { enabled: !!whatsapp, url: whatsapp ?? "" },
     facebook: { enabled: !!facebook, url: facebook ?? "" },
+    youtube: { enabled: !!youtube, url: youtube ?? "" },
     website: { enabled: !!website, url: website ?? "" },
     x: { enabled: !!x, url: x ?? "" },
   };
@@ -67,7 +69,7 @@ function readChannels(raw: unknown): BusinessChannels | null {
   if (typeof primaryRaw === "string") {
     const p = primaryRaw.trim().toLowerCase();
     const key = p === "twitter" ? "x" : p;
-    if (["instagram", "whatsapp", "facebook", "website", "x"].includes(key)) {
+    if (["instagram", "whatsapp", "facebook", "youtube", "website", "x"].includes(key)) {
       base.primary = key as BusinessChannels["primary"];
     }
   }
@@ -170,7 +172,7 @@ export function isScanDestinationAllowed(
   const pick = (
     key: keyof Pick<
       BusinessChannels,
-      "instagram" | "facebook" | "website" | "x"
+      "instagram" | "facebook" | "youtube" | "website" | "x"
     >,
   ): boolean => {
     const ch = channels[key];
@@ -187,6 +189,8 @@ export function isScanDestinationAllowed(
       return pick("instagram");
     case "facebook":
       return pick("facebook");
+    case "youtube":
+      return pick("youtube");
     case "website":
       return pick("website");
     case "x":
