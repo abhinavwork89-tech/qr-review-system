@@ -88,7 +88,7 @@ export function AdminLoginForm() {
         </label>
         <input
           type="email"
-          placeholder="admin@onecore.app"
+          placeholder="Enter Your Email Id"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           className="w-full rounded-xl border border-zinc-200 bg-zinc-50/50 px-3.5 py-2.5 text-sm text-zinc-900 shadow-sm outline-none ring-offset-2 transition placeholder:text-zinc-400 focus:border-indigo-300 focus:bg-white focus:ring-2 focus:ring-indigo-500/20 dark:border-zinc-700 dark:bg-zinc-950 dark:text-zinc-100 dark:focus:border-indigo-600 dark:focus:bg-zinc-950 dark:focus:ring-indigo-400/25"
