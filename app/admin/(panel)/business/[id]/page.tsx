@@ -16,6 +16,7 @@ import {
   normalizeMasterQrType,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
+import { resolveStoredMasterQrTarget, type MasterQrTarget } from "@/lib/scan/master-qr-target";
 
 type PageProps = {
   params: Promise<{ id: string }>;
@@ -80,20 +81,28 @@ export default async function BusinessDetailPage({ params, searchParams }: PageP
     !storedWaCc && !storedWaNum && waChannel.url.trim()
       ? tryInferWhatsAppPartsFromLegacyUrl(waChannel.url)
       : null;
+  const masterBaseForQr = {
+    google_url: asString(row.google_url) || null,
+    channels,
+    whatsapp_country_code: waChannel.enabled
+      ? (inferredWa?.dialCode || storedWaCc || DEFAULT_DIAL_CODE)
+      : null,
+    whatsapp_number: waChannel.enabled
+      ? clampWhatsAppLocalInput(inferredWa?.localNumber || storedWaNum || "")
+      : null,
+  };
   const masterQrType: MasterQrType =
     normalizeMasterQrType(
       typeof row.master_qr_type === "string" ? row.master_qr_type : null,
-    ) ??
-    computeDefaultMasterQrType({
-      google_url: asString(row.google_url) || null,
-      channels,
-      whatsapp_country_code: waChannel.enabled
-        ? (inferredWa?.dialCode || storedWaCc || DEFAULT_DIAL_CODE)
-        : null,
-      whatsapp_number: waChannel.enabled
-        ? clampWhatsAppLocalInput(inferredWa?.localNumber || storedWaNum || "")
-        : null,
-    });
+    ) ?? computeDefaultMasterQrType(masterBaseForQr);
+  const masterQrTarget: MasterQrTarget = resolveStoredMasterQrTarget({
+    master_qr_target:
+      typeof row.master_qr_target === "string" ? row.master_qr_target : null,
+    master_qr_type: typeof row.master_qr_type === "string" ? row.master_qr_type : null,
+    slug: asString(row.slug),
+    ...masterBaseForQr,
+    resource_urls: asStringArray(row.resource_urls),
+  });
   const identityTypeSlug = parseIdentityTypeInput(
     typeof row.identity_type === "string" ? row.identity_type : "",
   );
@@ -165,6 +174,7 @@ export default async function BusinessDetailPage({ params, searchParams }: PageP
           typeof row.call_number === "string" ? row.call_number : "",
         ),
         masterQrType,
+        masterQrTarget,
         identityType:
           typeof row.identity_type === "string" && row.identity_type.trim()
             ? identityTypeInitial

@@ -9,7 +9,11 @@ import { FormField } from "@/components/admin/add-business/form-field";
 import { FormSection } from "@/components/admin/add-business/form-section";
 import { FormToggle } from "@/components/admin/add-business/form-toggle";
 import { formInputBase, formInputError, formSelectBase } from "@/components/admin/add-business/form-styles";
-import { BrandedQrTile } from "@/components/admin/business/branded-qr-tile";
+import { BusinessQrSection } from "@/components/admin/business/business-qr-section";
+import {
+  MasterQrTargetDisplay,
+  MasterQrTargetSelector,
+} from "@/components/admin/business/master-qr-target-selector";
 import {
   RewardGameModeDisplay,
   RewardGameModeSelector,
@@ -54,21 +58,24 @@ import { isSafeYouTubeUrl } from "@/lib/review/youtube-url";
 import {
   validateDetailChannelErrors,
   validateEmailField,
-  validateMasterQrSelection,
+  validateMasterQrTargetSelection,
   validateMobileField,
   validateOptionalGoogleUrl,
 } from "@/lib/admin/business-form-validation";
-import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
+import { buildPublicReviewQrUrl } from "@/lib/qr/qr-urls";
 import { resolvePublicAppOrigin } from "@/lib/public-app-origin";
-import { adminQrLabelToScanType } from "@/lib/scan/qr-types";
 import {
   computeDefaultMasterQrType,
-  formatMasterQrTypeLabel,
   normalizeMasterQrType,
-  resolveMasterOutboundUrl,
-  validateMasterQrForPersist,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
+import {
+  buildMasterQrAbsoluteUrl,
+  formatMasterQrTargetLabel,
+  normalizeMasterQrTarget,
+  type MasterQrTarget,
+  validateMasterQrTargetForPersist,
+} from "@/lib/scan/master-qr-target";
 import {
   buildWhatsAppWaMeUrl,
   getWhatsAppFormErrors,
@@ -141,6 +148,7 @@ type DetailValues = {
   callCountryCode: string;
   callNumber: string;
   masterQrType: MasterQrType;
+  masterQrTarget: MasterQrTarget;
   aiEnabled: boolean;
   aiReviewLanguage: "en" | "hi" | "hinglish";
   aiDailyLimit: string;
@@ -162,27 +170,6 @@ type Analytics = {
 
 const AI_ADMIN = adminAiLabels();
 
-const MASTER_QR_GROUP_DETAIL = "masterQrEditBusiness";
-
-function noopMaster(): void {}
-
-/** Master radio: visible in view mode (read-only) and editable when `isEditing`. */
-function channelMasterSelect(
-  isEditing: boolean,
-  setMaster: (t: MasterQrType) => void,
-  value: MasterQrType,
-  current: MasterQrType,
-  eligible: boolean,
-) {
-  return {
-    groupName: MASTER_QR_GROUP_DETAIL,
-    value,
-    current,
-    onSelect: isEditing ? setMaster : noopMaster,
-    disabled: !isEditing || !eligible,
-  };
-}
-
 function detailValuesToMasterBase(v: DetailValues) {
   return {
     google_url: v.googleUrl.trim() || null,
@@ -200,6 +187,16 @@ function detailValuesToMasterBase(v: DetailValues) {
     whatsapp_number: v.channels.whatsapp.enabled
       ? clampWhatsAppLocalInput(v.whatsappNumber)
       : null,
+  };
+}
+
+function detailValuesToMasterTargetContext(v: DetailValues) {
+  return {
+    ...detailValuesToMasterBase(v),
+    slug: v.slug,
+    resource_urls: v.resources,
+    master_qr_target: v.masterQrTarget,
+    master_qr_type: v.masterQrType,
   };
 }
 
@@ -369,24 +366,52 @@ export function BusinessDetailEditor({
     });
   }, [isEditing, values.channels]);
 
+  const appOrigin = useMemo(() => resolvePublicAppOrigin().replace(/\/+$/, ""), []);
+
+  const publicReviewQrUrl = useMemo(
+    () => buildPublicReviewQrUrl(appOrigin, values.slug),
+    [appOrigin, values.slug],
+  );
+
+  const masterQrPayloadUrl = useMemo(() => {
+    if (values.status !== "active" || !values.id) return "";
+    return buildMasterQrAbsoluteUrl(appOrigin, values.id);
+  }, [values.status, values.id, appOrigin]);
+
+  const masterTargetLabel = useMemo(
+    () => formatMasterQrTargetLabel(values.masterQrTarget),
+    [values.masterQrTarget],
+  );
+
+  const masterTargetContext = useMemo(
+    () => detailValuesToMasterTargetContext(values),
+    [values],
+  );
+
   useEffect(() => {
     if (!isEditing) {
       queueMicrotask(() => setMasterQrError(undefined));
       return;
     }
-    const base = detailValuesToMasterBase(values);
     queueMicrotask(() => {
       setMasterQrError(
-        validateMasterQrSelection(base, values.masterQrType) ?? undefined,
+        validateMasterQrTargetSelection(
+          detailValuesToMasterTargetContext(values),
+          values.masterQrTarget,
+          appOrigin,
+        ) ?? undefined,
       );
     });
   }, [
     isEditing,
-    values.masterQrType,
+    appOrigin,
+    values.masterQrTarget,
     values.googleUrl,
     values.channels,
     values.whatsappCountryCode,
     values.whatsappNumber,
+    values.resources,
+    values.slug,
   ]);
 
   useEffect(() => {
@@ -447,52 +472,32 @@ export function BusinessDetailEditor({
     }
   }, [initial, isEditing]);
 
-  const publicUrl = useMemo(
-    () => buildBusinessPublicUrl(values.slug),
-    [values.slug],
-  );
-
-  const masterOutbound = useMemo(() => {
-    const base = detailValuesToMasterBase(values);
-    const eff =
-      normalizeMasterQrType(values.masterQrType) ?? computeDefaultMasterQrType(base);
-    return resolveMasterOutboundUrl({ ...base, master_qr_type: eff }, publicUrl);
-  }, [values, publicUrl]);
-
-  const masterTrackUrl = useMemo(() => {
-    if (values.status !== "active" || !values.id) return "";
-    return buildTrackedScanOutUrl(values.id, "master", masterOutbound);
-  }, [values.status, values.id, masterOutbound]);
-
-  const masterLabel = useMemo(() => {
-    const base = detailValuesToMasterBase(values);
-    const eff =
-      normalizeMasterQrType(values.masterQrType) ?? computeDefaultMasterQrType(base);
-    return formatMasterQrTypeLabel(eff);
-  }, [values]);
-
   const mobileParts = useMemo(() => splitPhoneNumber(values.mobile), [values.mobile]);
 
   useEffect(() => {
     if (!isEditing) return;
     const v = values;
-    const base = detailValuesToMasterBase(v);
-    if (validateMasterQrForPersist({ ...base, master_qr_type: v.masterQrType }) === null) {
-      return;
-    }
-    const d = computeDefaultMasterQrType(base);
-    if (d === v.masterQrType) return;
+    const err = validateMasterQrTargetForPersist(
+      detailValuesToMasterTargetContext(v),
+      v.masterQrTarget,
+      appOrigin,
+    );
+    if (!err || v.masterQrTarget === "review_page") return;
     const syncId = window.setTimeout(() => {
-      setValues((s) => (s.masterQrType === d ? s : { ...s, masterQrType: d }));
+      setValues((s) =>
+        s.masterQrTarget === "review_page" ? s : { ...s, masterQrTarget: "review_page" },
+      );
     }, 0);
     return () => window.clearTimeout(syncId);
   }, [
     isEditing,
+    appOrigin,
     values.googleUrl,
     values.channels,
     values.whatsappCountryCode,
     values.whatsappNumber,
-    values.masterQrType,
+    values.resources,
+    values.masterQrTarget,
   ]);
   const identityNumberMaxLen = useMemo(() => {
     const t = parseIdentityTypeInput(values.identityType);
@@ -568,7 +573,7 @@ export function BusinessDetailEditor({
 
   const handleCopy = async () => {
     try {
-      await navigator.clipboard.writeText(publicUrl);
+      await navigator.clipboard.writeText(publicReviewQrUrl);
       setCopied(true);
       if (copyFeedbackTimerRef.current) clearTimeout(copyFeedbackTimerRef.current);
       copyFeedbackTimerRef.current = setTimeout(() => {
@@ -708,11 +713,11 @@ export function BusinessDetailEditor({
     } else {
       setCallErrors({});
     }
-    const masterBaseSave = detailValuesToMasterBase(saveSnap);
-    const masterErrSave = validateMasterQrForPersist({
-      ...masterBaseSave,
-      master_qr_type: saveSnap.masterQrType,
-    });
+    const masterErrSave = validateMasterQrTargetForPersist(
+      detailValuesToMasterTargetContext(saveSnap),
+      saveSnap.masterQrTarget,
+      appOrigin,
+    );
     if (masterErrSave) {
       setSubmitError(masterErrSave);
       return;
@@ -957,16 +962,25 @@ export function BusinessDetailEditor({
         identityProofUrls: nextIdentityProofUrls ?? saveSnap.identityProofUrls,
         clientPhotoUrl: nextClientPhotoUrl ?? saveSnap.clientPhotoUrl,
       };
-      if (typeof result === "object" && result !== null && "master_qr_type" in result) {
-        const rawM = (result as { master_qr_type?: unknown }).master_qr_type;
-        if (typeof rawM === "string") {
-          const n = normalizeMasterQrType(rawM);
-          if (n) nextValues = { ...nextValues, masterQrType: n };
-        } else if (rawM === null) {
-          nextValues = {
-            ...nextValues,
-            masterQrType: computeDefaultMasterQrType(detailValuesToMasterBase(nextValues)),
-          };
+      if (typeof result === "object" && result !== null) {
+        if ("master_qr_target" in result) {
+          const rawT = (result as { master_qr_target?: unknown }).master_qr_target;
+          if (typeof rawT === "string") {
+            const n = normalizeMasterQrTarget(rawT);
+            if (n) nextValues = { ...nextValues, masterQrTarget: n };
+          }
+        }
+        if ("master_qr_type" in result) {
+          const rawM = (result as { master_qr_type?: unknown }).master_qr_type;
+          if (typeof rawM === "string") {
+            const n = normalizeMasterQrType(rawM);
+            if (n) nextValues = { ...nextValues, masterQrType: n };
+          } else if (rawM === null) {
+            nextValues = {
+              ...nextValues,
+              masterQrType: computeDefaultMasterQrType(detailValuesToMasterBase(nextValues)),
+            };
+          }
         }
       }
       setValues(nextValues);
@@ -1100,7 +1114,7 @@ export function BusinessDetailEditor({
         </p>
         <div className="mt-2 flex flex-wrap items-center gap-2">
           <code className="rounded-lg bg-zinc-100 px-2.5 py-1.5 text-sm text-zinc-700 dark:bg-zinc-800 dark:text-zinc-200">
-            {publicUrl}
+            {publicReviewQrUrl}
           </code>
           <button type="button" className={adminPanel.btnSecondary} onClick={handleCopy}>
             {copied ? "Copied" : "Copy"}
@@ -1108,9 +1122,9 @@ export function BusinessDetailEditor({
         </div>
         <div className="mt-4 flex flex-wrap items-center gap-2 rounded-xl border border-indigo-200/80 bg-indigo-50/60 px-3 py-2.5 dark:border-indigo-900/50 dark:bg-indigo-950/25">
           <span className="rounded bg-indigo-600 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-white">
-            Master QR
+            Master target
           </span>
-          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{masterLabel}</span>
+          <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{masterTargetLabel}</span>
           {values.directRedirect ? (
             <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
               Direct redirect on
@@ -1120,8 +1134,9 @@ export function BusinessDetailEditor({
           )}
         </div>
         <p className="mt-3 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
-          Scans and pasted public links use the tracked master URL when direct redirect is on.
-          Change master under Review Settings and Channels (Edit).
+          Master QR uses <code className="text-[11px]">/m/{"{businessId}"}</code> (dynamic). Client
+          Review QR uses <code className="text-[11px]">/r/{"{slug}"}</code> (always the review page).
+          Change master target under Review Settings (Edit).
         </p>
         <div className="mt-4 rounded-xl border border-zinc-200/80 bg-zinc-50/50 px-3 py-2.5 text-xs dark:border-zinc-800 dark:bg-zinc-950/30">
           <p className="font-medium text-zinc-700 dark:text-zinc-200">Call CTA (public page)</p>
@@ -1147,15 +1162,28 @@ export function BusinessDetailEditor({
       </div>
 
       {values.status === "active" ? (
-        <>
-          <QrCodeCard
-            value={masterTrackUrl || publicUrl}
+        <div className="grid grid-cols-1 gap-5 xl:grid-cols-2">
+          <BusinessQrSection
+            variant="master"
+            title="Master QR"
+            businessId={values.id}
+            targetLabel={masterTargetLabel}
+            description="Reusable dynamic business QR. The scan destination follows your selected Master QR Target (Google, social, review page, and more)."
+            payloadUrl={masterQrPayloadUrl}
             brandLabel={values.brandName || values.name || "business"}
+            qrType="master"
             logoUrl={values.logoUrl.trim() ? values.logoUrl : null}
-            masterLabel={masterLabel}
           />
-          <QrLinksCard values={values} masterTrackUrl={masterTrackUrl} />
-        </>
+          <BusinessQrSection
+            variant="client-review"
+            title="Client Review QR"
+            description="Always opens your branded public review page. Use this when you only want review collection — not a changing master destination."
+            payloadUrl={publicReviewQrUrl}
+            brandLabel={values.brandName || values.name || "business"}
+            qrType="client-review"
+            logoUrl={values.logoUrl.trim() ? values.logoUrl : null}
+          />
+        </div>
       ) : (
         <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 text-sm text-zinc-500 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80 dark:text-zinc-400 sm:p-5">
           QR is available only when business status is Active.
@@ -1870,29 +1898,6 @@ export function BusinessDetailEditor({
                 className={`${formInputBase} ${basicFieldErrors.googleUrl ? formInputError : ""}`}
                 disabled={!isEditing}
               />
-              <label
-                className={`mt-2 flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 ${
-                  isEditing &&
-                  values.googleUrl.trim() &&
-                  isSafeHttpUrl(values.googleUrl.trim())
-                    ? "cursor-pointer"
-                    : "cursor-default"
-                }`}
-              >
-                <input
-                  type="radio"
-                  name={MASTER_QR_GROUP_DETAIL}
-                  checked={values.masterQrType === "google_review"}
-                  disabled={
-                    !isEditing ||
-                    !values.googleUrl.trim() ||
-                    !isSafeHttpUrl(values.googleUrl.trim())
-                  }
-                  onChange={() => setField("masterQrType")("google_review")}
-                  className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-                />
-                <span>Set as Master QR (Google Review)</span>
-              </label>
             </FormField>
             <FormField label="Threshold" htmlFor="threshold">
               <select
@@ -1909,6 +1914,26 @@ export function BusinessDetailEditor({
                 <option value="5">5</option>
               </select>
             </FormField>
+          </div>
+          <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Master QR target</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Chooses where <code className="text-[11px]">/m/{"{businessId}"}</code> redirects.
+              Social buttons on the review page still use tracked links for analytics.
+            </p>
+            <div className="mt-3">
+              {!isEditing ? (
+                <MasterQrTargetDisplay value={values.masterQrTarget} />
+              ) : (
+                <MasterQrTargetSelector
+                  value={values.masterQrTarget}
+                  context={masterTargetContext}
+                  appOrigin={appOrigin}
+                  disabled={!isEditing}
+                  onSelect={(t) => setField("masterQrTarget")(t)}
+                />
+              )}
+            </div>
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormToggle
@@ -1964,7 +1989,7 @@ export function BusinessDetailEditor({
 
         <FormSection
           title="SECTION 5: Channels"
-          description="Enable links and choose exactly one Master QR for the primary scan destination."
+          description="Enable social and website links for the public review page."
         >
           {/* URL channel order: lib/admin/admin-url-channels.ts (ADMIN_URL_CHANNEL_DEFS) */}
           {isEditing && masterQrError ? (
@@ -1983,14 +2008,6 @@ export function BusinessDetailEditor({
               onUrl={setChannel("instagram", "url")}
               disabled={!isEditing}
               urlError={channelErrors.instagram}
-              masterSelect={channelMasterSelect(
-                isEditing,
-                (t) => setField("masterQrType")(t),
-                "instagram",
-                values.masterQrType,
-                values.channels.instagram.enabled === true &&
-                  isSafeHttpUrl(values.channels.instagram.url.trim()),
-              )}
             />
             {!isEditing ? (
               <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
@@ -1999,16 +2016,6 @@ export function BusinessDetailEditor({
                   dialCode={values.whatsappCountryCode}
                   localNumber={values.whatsappNumber}
                 />
-                <label className="flex cursor-default items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-                  <input
-                    type="radio"
-                    name={MASTER_QR_GROUP_DETAIL}
-                    checked={values.masterQrType === "whatsapp"}
-                    disabled
-                    className="accent-indigo-600 opacity-80"
-                  />
-                  <span>Master QR (WhatsApp)</span>
-                </label>
               </div>
             ) : (
               <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
@@ -2046,25 +2053,6 @@ export function BusinessDetailEditor({
                   dialSelectId="whatsappCountryCode"
                   localInputId="whatsappNumber"
                 />
-                <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-                  <input
-                    type="radio"
-                    name={MASTER_QR_GROUP_DETAIL}
-                    checked={values.masterQrType === "whatsapp"}
-                    disabled={(() => {
-                      if (!values.channels.whatsapp.enabled) return true;
-                      const waE = getWhatsAppFormErrors({
-                        enabled: true,
-                        countryDialRaw: values.whatsappCountryCode,
-                        localRaw: values.whatsappNumber,
-                      });
-                      return Boolean(waE.whatsappNumber || waE.whatsappCountryCode);
-                    })()}
-                    onChange={() => setField("masterQrType")("whatsapp")}
-                    className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-                  />
-                  <span>Set as Master QR (WhatsApp)</span>
-                </label>
               </div>
             )}
             {!isEditing ? (
@@ -2118,14 +2106,6 @@ export function BusinessDetailEditor({
               onUrl={setChannel("facebook", "url")}
               disabled={!isEditing}
               urlError={channelErrors.facebook}
-              masterSelect={channelMasterSelect(
-                isEditing,
-                (t) => setField("masterQrType")(t),
-                "facebook",
-                values.masterQrType,
-                values.channels.facebook.enabled === true &&
-                  isSafeHttpUrl(values.channels.facebook.url.trim()),
-              )}
             />
             <ChannelEditor
               label="YouTube"
@@ -2134,14 +2114,6 @@ export function BusinessDetailEditor({
               onUrl={setChannel("youtube", "url")}
               disabled={!isEditing}
               urlError={channelErrors.youtube}
-              masterSelect={channelMasterSelect(
-                isEditing,
-                (t) => setField("masterQrType")(t),
-                "youtube",
-                values.masterQrType,
-                values.channels.youtube.enabled === true &&
-                  isSafeYouTubeUrl(values.channels.youtube.url.trim()),
-              )}
             />
             <ChannelEditor
               label="Website"
@@ -2150,14 +2122,6 @@ export function BusinessDetailEditor({
               onUrl={setChannel("website", "url")}
               disabled={!isEditing}
               urlError={channelErrors.website}
-              masterSelect={channelMasterSelect(
-                isEditing,
-                (t) => setField("masterQrType")(t),
-                "website",
-                values.masterQrType,
-                values.channels.website.enabled === true &&
-                  isSafeHttpUrl(values.channels.website.url.trim()),
-              )}
             />
             <ChannelEditor
               label="X (Twitter)"
@@ -2166,14 +2130,6 @@ export function BusinessDetailEditor({
               onUrl={setChannel("x", "url")}
               disabled={!isEditing}
               urlError={channelErrors.x}
-              masterSelect={channelMasterSelect(
-                isEditing,
-                (t) => setField("masterQrType")(t),
-                "twitter",
-                values.masterQrType,
-                values.channels.x.enabled === true &&
-                  isSafeHttpUrl(values.channels.x.url.trim()),
-              )}
             />
           </div>
         </FormSection>
@@ -2274,7 +2230,6 @@ function ChannelEditor({
   onUrl,
   disabled,
   urlError,
-  masterSelect,
 }: {
   label: string;
   channel: Channel;
@@ -2282,13 +2237,6 @@ function ChannelEditor({
   onUrl: (next: string) => void;
   disabled: boolean;
   urlError?: string;
-  masterSelect?: {
-    groupName: string;
-    value: MasterQrType;
-    current: MasterQrType;
-    onSelect: (t: MasterQrType) => void;
-    disabled?: boolean;
-  };
 }) {
   return (
     <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
@@ -2310,23 +2258,6 @@ function ChannelEditor({
         onChange={onToggle}
         disabled={disabled}
       />
-      {masterSelect ? (
-        <label
-          className={`flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400 ${
-            masterSelect.disabled ? "cursor-default" : "cursor-pointer"
-          }`}
-        >
-          <input
-            type="radio"
-            name={masterSelect.groupName}
-            checked={masterSelect.current === masterSelect.value}
-            disabled={Boolean(masterSelect.disabled)}
-            onChange={() => masterSelect.onSelect(masterSelect.value)}
-            className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-          />
-          <span>Set as Master QR</span>
-        </label>
-      ) : null}
     </div>
   );
 }
@@ -2453,117 +2384,6 @@ function ColorPreviewPlate({ title, color }: { title: string; color: string }) {
   );
 }
 
-function whatsappQrIfEnabled(v: DetailValues): { label: string; value: string } | null {
-  if (!v.channels.whatsapp.enabled) return null;
-  const resolved = resolveWhatsAppHttpsUrl({
-    countryCode: v.whatsappCountryCode,
-    localNumber: v.whatsappNumber,
-    legacyChannelUrl: v.channels.whatsapp.url,
-    channelEnabled: v.channels.whatsapp.enabled,
-  });
-  const u = resolved.trim();
-  if (!u || !isSafeHttpUrl(u)) return null;
-  return { label: "WhatsApp", value: u };
-}
-
-function channelQrIfEnabled(
-  label: string,
-  channel: { enabled: boolean; url: string },
-): { label: string; value: string } | null {
-  if (!channel.enabled) return null;
-  const u = channel.url?.trim() ?? "";
-  if (!u) return null;
-  const valid = label === "YouTube" ? isSafeYouTubeUrl(u) : isSafeHttpUrl(u);
-  if (!valid) return null;
-  return { label, value: u };
-}
-
-function QrLinksCard({
-  values,
-  masterTrackUrl,
-}: {
-  values: DetailValues;
-  masterTrackUrl: string;
-}) {
-  const canShow = values.status === "active";
-  const brandLabel = values.brandName || values.name || "business";
-  const links: { label: string; value: string; isMaster?: boolean }[] = [];
-  if (canShow && masterTrackUrl) {
-    links.push({ label: "Master", value: masterTrackUrl, isMaster: true });
-  }
-  const g = values.googleUrl?.trim() ?? "";
-  if (g && isSafeHttpUrl(g)) {
-    links.push({ label: "Google", value: g });
-  }
-  for (const item of [
-    channelQrIfEnabled("Instagram", values.channels.instagram),
-    channelQrIfEnabled("Facebook", values.channels.facebook),
-    channelQrIfEnabled("YouTube", values.channels.youtube),
-    whatsappQrIfEnabled(values),
-    channelQrIfEnabled("Website", values.channels.website),
-    channelQrIfEnabled("X", values.channels.x),
-  ]) {
-    if (item) links.push(item);
-  }
-  values.resources.forEach((url, index) => {
-    const u = url?.trim() ?? "";
-    if (!u || !isSafeHttpUrl(u)) return;
-    links.push({
-      label: values.resources.length > 1 ? `Resource ${index + 1}` : "Resource",
-      value: u,
-    });
-  });
-
-  return (
-    <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80 sm:p-5">
-      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-        QR Links
-      </p>
-      {!canShow ? (
-        <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">QR is available only for active businesses.</p>
-      ) : links.length === 0 ? (
-        <p className="mt-3 text-sm text-zinc-500 dark:text-zinc-400">No channel links available.</p>
-      ) : (
-        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {links.map((item) => {
-            const qrType = item.isMaster ? null : adminQrLabelToScanType(item.label);
-            const qrValue =
-              item.isMaster
-                ? item.value
-                : canShow && values.id && qrType
-                  ? buildTrackedScanOutUrl(values.id, qrType, item.value)
-                  : item.value;
-            return (
-            <div
-              key={item.label}
-              className="rounded-xl border border-zinc-200 bg-white p-3 dark:border-zinc-700 dark:bg-zinc-950"
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <p className="text-xs font-medium text-zinc-500 dark:text-zinc-400">{item.label}</p>
-                {item.isMaster ? (
-                  <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-200">
-                    Master
-                  </span>
-                ) : null}
-              </div>
-              <div className="mt-2 flex justify-center">
-                <BrandedQrTile
-                  value={qrValue}
-                  brandLabel={brandLabel}
-                  qrType={item.isMaster ? "Master" : item.label}
-                  logoUrl={values.logoUrl.trim() ? values.logoUrl : null}
-                  size={130}
-                />
-              </div>
-            </div>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function ReviewList({
   reviews,
 }: {
@@ -2589,44 +2409,6 @@ function ReviewList({
     </div>
   );
 }
-
-function QrCodeCard({
-  value,
-  brandLabel,
-  logoUrl,
-  masterLabel,
-}: {
-  value: string;
-  brandLabel: string;
-  logoUrl: string | null;
-  masterLabel: string;
-}) {
-  return (
-    <div className="rounded-2xl border border-zinc-200/80 bg-white p-4 shadow-sm dark:border-zinc-800 dark:bg-zinc-900/80 sm:p-5">
-      <div className="flex flex-wrap items-center gap-2">
-        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500 dark:text-zinc-400">
-          Master QR
-        </p>
-        <span className="rounded-full bg-indigo-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-indigo-800 dark:bg-indigo-950/80 dark:text-indigo-200">
-          Master · {masterLabel}
-        </span>
-      </div>
-      <div className="mt-4 flex flex-col items-center justify-center gap-4">
-        <p className="text-center text-xs text-zinc-600 dark:text-zinc-400">
-          Scans use your tracked link and open the selected channel ({masterLabel}).
-        </p>
-        <BrandedQrTile value={value} brandLabel={brandLabel} qrType="master" logoUrl={logoUrl} size={200} />
-      </div>
-    </div>
-  );
-}
-
-function buildBusinessPublicUrl(slug: string): string {
-  const safeSlug = slug.trim() || "-";
-  const base = resolvePublicAppOrigin().replace(/\/+$/, "");
-  return `${base}/r/${safeSlug}`;
-}
-
 
 function formatPlan(plan: string): string {
   if (!plan) return "\u2014";
@@ -2667,6 +2449,7 @@ type PatchPayload = {
   call_country_code: string;
   call_number: string | null;
   master_qr_type: MasterQrType;
+  master_qr_target: MasterQrTarget;
   ai_enabled: boolean;
   ai_review_language: string;
   ai_daily_limit: number;
@@ -2729,6 +2512,7 @@ function toPatchPayload(v: DetailValues): PatchPayload {
     identity_proof_urls: [...v.identityProofUrls],
     client_photo_url: v.clientPhotoUrl.trim() ? v.clientPhotoUrl.trim() : null,
     master_qr_type: v.masterQrType,
+    master_qr_target: v.masterQrTarget,
     ai_enabled: v.aiEnabled,
     ai_review_language: v.aiReviewLanguage,
     ai_daily_limit:
@@ -2767,6 +2551,7 @@ function isPatchPayloadEqual(a: PatchPayload, b: PatchPayload): boolean {
     a.call_country_code !== b.call_country_code ||
     a.call_number !== b.call_number ||
     a.master_qr_type !== b.master_qr_type ||
+    a.master_qr_target !== b.master_qr_target ||
     a.ai_enabled !== b.ai_enabled ||
     a.ai_review_language !== b.ai_review_language ||
     a.ai_daily_limit !== b.ai_daily_limit ||
@@ -2855,6 +2640,9 @@ function buildPatchPayload(
   }
   if (cur.master_qr_type !== base.master_qr_type) {
     patch.master_qr_type = cur.master_qr_type;
+  }
+  if (cur.master_qr_target !== base.master_qr_target) {
+    patch.master_qr_target = cur.master_qr_target;
   }
   if (cur.ai_enabled !== base.ai_enabled) patch.ai_enabled = cur.ai_enabled;
   if (cur.ai_review_language !== base.ai_review_language) {

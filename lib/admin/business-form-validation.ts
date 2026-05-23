@@ -6,6 +6,11 @@ import {
   type MasterQrType,
   type MasterQrResolutionInput,
 } from "@/lib/scan/master-qr";
+import {
+  validateMasterQrTargetForPersist,
+  type MasterQrTarget,
+  type MasterQrTargetContext,
+} from "@/lib/scan/master-qr-target";
 import { getWhatsAppFormErrors } from "@/lib/whatsapp/wa-me";
 import { validateInternationalPhone } from "@/lib/phone/mobile";
 
@@ -59,6 +64,14 @@ export function validateMasterQrSelection(
   masterQrType: MasterQrType,
 ): string | undefined {
   return validateMasterQrForPersist({ ...base, master_qr_type: masterQrType }) ?? undefined;
+}
+
+export function validateMasterQrTargetSelection(
+  row: MasterQrTargetContext,
+  target: MasterQrTarget,
+  appOrigin: string,
+): string | undefined {
+  return validateMasterQrTargetForPersist(row, target, appOrigin) ?? undefined;
 }
 
 export function validateWhatsAppFields(input: {

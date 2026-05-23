@@ -1,3 +1,4 @@
+import { buildMasterQrPayloadUrl } from "@/lib/qr/qr-urls";
 import type { ScanQrType } from "@/lib/scan/qr-types";
 import { resolvePublicAppOrigin } from "@/lib/public-app-origin";
 
@@ -25,5 +26,9 @@ export function buildTrackedScanOutUrl(
   originOverride?: string | null,
 ): string {
   const raw = (originOverride?.trim() || scanTrackingPublicOrigin()).replace(/\/+$/, "");
+  // Master QR architecture v2: permanent `/m/{businessId}` only (never scan/out).
+  if (qrType === "master") {
+    return buildMasterQrPayloadUrl(raw, businessId);
+  }
   return `${raw}${buildTrackedScanOutPath(businessId, qrType, destinationUrl)}`;
 }

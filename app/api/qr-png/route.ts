@@ -7,8 +7,8 @@ export const runtime = "nodejs";
 const MAX_PAYLOAD_CHARS = 3500;
 
 /**
- * Renders a PNG QR for an **allowed** absolute URL (same-origin scan or review page).
- * Used by welcome email `<Img>` so clients do not load arbitrary third-party assets as QR.
+ * Renders a PNG QR for an **allowed** same-origin URL (`/m/{businessId}` or `/r/{slug}` only).
+ * Tracked `/api/scan/out` payloads are rejected so master QR cannot be generated via this route.
  */
 export async function GET(request: NextRequest) {
   const origin = request.nextUrl.origin;
@@ -39,19 +39,10 @@ export async function GET(request: NextRequest) {
   }
 
   const path = target.pathname;
-  const allowedScan = path === "/api/scan/out";
   const allowedReview = /^\/r\/[^/]+$/.test(path);
-  if (!allowedScan && !allowedReview) {
+  const allowedMaster = /^\/m\/[^/]+$/.test(path);
+  if (!allowedReview && !allowedMaster) {
     return new NextResponse("Forbidden", { status: 403 });
-  }
-
-  if (allowedScan) {
-    const b = target.searchParams.get("b")?.trim() ?? "";
-    const t = target.searchParams.get("t")?.trim() ?? "";
-    const u = target.searchParams.get("u")?.trim() ?? "";
-    if (!b || !t || !u) {
-      return new NextResponse("Invalid scan URL", { status: 400 });
-    }
   }
 
   try {

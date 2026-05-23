@@ -95,12 +95,12 @@ export default async function ReviewPage({ params }: PageProps) {
       directRedirectResolved: display.directRedirect,
       masterOutboundUrl: display.masterOutboundUrl,
       directOutboundFromReviewPage: display.directOutboundFromReviewPage,
-      masterQrTrackUrl: display.masterQrTrackUrl,
+      masterQrUrl: display.masterQrUrl,
     });
   }
 
   if (display.directOutboundFromReviewPage) {
-    redirect(display.masterQrTrackUrl);
+    redirect(display.masterOutboundUrl);
   }
 
   return <ActiveReviewView slug={slug} display={display} />;

@@ -1,11 +1,9 @@
 import type { QrImageAsset } from "@/emails/types";
 import { resolveEmailPublicAppOrigin } from "@/lib/public-app-origin";
-import { isSafeHttpUrl } from "@/lib/review/business-config";
-import { computeMasterQrScanFields } from "@/lib/review/display-model";
-import { renderQrPngBuffer } from "@/lib/qr/render-qr-png-buffer";
-import type { MasterQrType } from "@/lib/scan/master-qr";
+import { renderBrandedQrPngBuffer } from "@/lib/qr/render-branded-qr-png-buffer";
+import { normalizeMasterQrPayloadUrl } from "@/lib/qr/qr-urls";
+import { buildMasterQrAbsoluteUrl } from "@/lib/scan/master-qr-target";
 
-const MAX_QR_PAYLOAD_LEN = 3200;
 const WELCOME_QR_CID = "welcome-master-qr";
 
 export type WelcomeEmailQrAttachment = {
@@ -16,18 +14,12 @@ export type WelcomeEmailQrAttachment = {
 
 export type WelcomeMasterQrInput = {
   businessId: string;
-  slug: string;
   brandName: string;
-  google_url: string | null;
-  channels: unknown;
-  whatsapp_country_code: string | null;
-  whatsapp_number: string | null;
-  master_qr_type: string | null;
+  logoUrl?: string | null;
 };
 
 /**
- * Welcome email: inline PNG QR (CID attachment) encoding the public review page URL.
- * Never uses `resource_urls` / digital assets or remote `/api/qr-png` fetches in `<img src>`.
+ * Welcome email: inline PNG QR encoding the permanent master QR URL `/m/{businessId}`.
  */
 export async function buildWelcomeEmailMasterQrContext(
   input: WelcomeMasterQrInput,
@@ -35,62 +27,31 @@ export async function buildWelcomeEmailMasterQrContext(
   qrImages: QrImageAsset[];
   qrAttachments: WelcomeEmailQrAttachment[];
   debug: {
-    master_qr_type: MasterQrType;
-    resolvedScanOutbound: string;
-    masterTrackUrl: string;
-    finalQrPayload: string;
+    masterQrPayload: string;
     finalQrImageUrl: string | null;
-    payloadSource: "review_plain";
   };
 }> {
   const origin = resolveEmailPublicAppOrigin().replace(/\/+$/, "");
-
-  const scan = computeMasterQrScanFields(
-    {
-      id: input.businessId,
-      slug: input.slug,
-      google_url: input.google_url,
-      channels: input.channels,
-      whatsapp_country_code: input.whatsapp_country_code,
-      whatsapp_number: input.whatsapp_number,
-      master_qr_type: input.master_qr_type,
-    },
+  const payload = normalizeMasterQrPayloadUrl(
+    buildMasterQrAbsoluteUrl(origin, input.businessId),
+    input.businessId,
     origin,
   );
-
   const brandLabel = input.brandName.trim() || "Your business";
-  const payload = scan.reviewPageUrl;
-  const payloadSource = "review_plain" as const;
 
-  const emptyDebug = {
-    master_qr_type: scan.effectiveMasterType,
-    resolvedScanOutbound: scan.masterOutboundUrl,
-    masterTrackUrl: scan.masterQrTrackUrl,
-    finalQrPayload: "",
-    finalQrImageUrl: null,
-    payloadSource,
+  const empty = {
+    qrImages: [] as QrImageAsset[],
+    qrAttachments: [] as WelcomeEmailQrAttachment[],
+    debug: { masterQrPayload: payload, finalQrImageUrl: null },
   };
 
-  if (!isSafeHttpUrl(payload) || payload.length > MAX_QR_PAYLOAD_LEN) {
-    return { qrImages: [], qrAttachments: [], debug: emptyDebug };
-  }
-
-  const png = await renderQrPngBuffer(payload);
+  const png = await renderBrandedQrPngBuffer(payload, { logoUrl: input.logoUrl });
   if (!png) {
-    return {
-      qrImages: [],
-      qrAttachments: [],
-      debug: { ...emptyDebug, finalQrPayload: payload },
-    };
+    return empty;
   }
 
   return {
-    qrImages: [
-      {
-        src: `cid:${WELCOME_QR_CID}`,
-        alt: `Review QR — ${brandLabel}`,
-      },
-    ],
+    qrImages: [],
     qrAttachments: [
       {
         filename: "master-qr.png",
@@ -99,12 +60,8 @@ export async function buildWelcomeEmailMasterQrContext(
       },
     ],
     debug: {
-      master_qr_type: scan.effectiveMasterType,
-      resolvedScanOutbound: scan.masterOutboundUrl,
-      masterTrackUrl: scan.masterQrTrackUrl,
-      finalQrPayload: payload,
+      masterQrPayload: payload,
       finalQrImageUrl: `cid:${WELCOME_QR_CID}`,
-      payloadSource,
     },
   };
 }

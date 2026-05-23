@@ -51,23 +51,14 @@ export function scheduleWelcomeEmailAfterCreate(input: {
         input.brandName.trim() || input.name.trim() || "Your business";
       const { qrImages, qrAttachments, debug } = await buildWelcomeEmailMasterQrContext({
         businessId: input.businessId,
-        slug: input.slug,
         brandName: brandLabel,
-        google_url: input.google_url,
-        channels: input.channels,
-        whatsapp_country_code: input.whatsapp_country_code,
-        whatsapp_number: input.whatsapp_number,
-        master_qr_type: input.master_qr_type,
+        logoUrl: input.logoUrl,
       });
       emailFlowInfo("welcome_email_qr_resolved", {
         eventTrigger: "welcome",
         correlationId: input.businessId,
-        resolvedQrSource: debug.payloadSource,
-        master_qr_type: debug.master_qr_type,
         finalQrImageUrl: debug.finalQrImageUrl,
-        finalQrPayload: debug.finalQrPayload,
-        masterTrackUrl: debug.masterTrackUrl,
-        resolvedScanOutbound: debug.resolvedScanOutbound,
+        finalQrPayload: debug.masterQrPayload,
         emailTemplatePayload: {
           qrImageCount: qrImages.length,
           reviewPageUrl: buildReviewPageUrl(input.slug),

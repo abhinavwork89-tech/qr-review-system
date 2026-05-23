@@ -7,8 +7,16 @@ import type {
   BusinessChannelLink,
 } from "@/lib/types/business";
 import { mergeWhatsAppUrlIntoChannels } from "@/lib/whatsapp/wa-me";
-import { buildTrackedScanOutUrl, scanTrackingPublicOrigin } from "@/lib/scan/build-tracked-out-url";
+import { buildPublicReviewQrUrl } from "@/lib/qr/qr-urls";
+import { scanTrackingPublicOrigin } from "@/lib/scan/build-tracked-out-url";
 import { isSafeHttpUrl } from "@/lib/review/business-config";
+import {
+  buildMasterQrAbsoluteUrl,
+  formatMasterQrTargetLabel,
+  resolveMasterQrTargetDestination,
+  resolveStoredMasterQrTarget,
+  type MasterQrTarget,
+} from "@/lib/scan/master-qr-target";
 import { buildCallTelHref } from "@/lib/call/call-channel";
 import { parsePublicResourceUrls } from "@/lib/review/parse-resource-urls";
 import { normalizeReviewLocale } from "@/lib/i18n/review-locale";
@@ -16,7 +24,6 @@ import {
   computeDefaultMasterQrType,
   masterScanDestinationsMatch,
   normalizeMasterQrType,
-  resolveMasterOutboundUrl,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
 import type { AiReviewLanguage } from "@/lib/ai/constants";
@@ -52,16 +59,23 @@ export type ReviewDisplayModel = {
   channels: BusinessChannels | null;
   /** Sanitized public HTTP(S) URLs for digital resources (images, PDFs, etc.). */
   resourceUrls: string[];
-  /** Resolved master QR target key (stored or computed default). */
+  /** @deprecated Legacy master type key; prefer `masterQrTarget`. */
   masterQrType: MasterQrType;
-  /** Tracked `/api/scan/out` URL for the master QR on the public review page. */
+  /** @deprecated Use `masterQrUrl`. Permanent `/m/{businessId}` payload (never scan/out). */
   masterQrTrackUrl: string;
+  /** Configured master QR runtime target. */
+  masterQrTarget: MasterQrTarget;
+  masterQrTargetLabel: string;
+  /** Permanent master QR payload: `{origin}/m/{businessId}`. */
+  masterQrUrl: string;
+  /** Fixed public review QR: `{origin}/r/{slug}`. */
+  publicReviewQrUrl: string;
   /**
-   * When true, `/r/[slug]` should not render the public shell: redirect straight to
-   * `masterQrTrackUrl` (HTTP 302 chain → destination) so scan_logs still record `master`.
+   * When true, `/r/[slug]` redirects directly to the resolved master target destination
+   * (no `/api/scan/out` on the review page load).
    */
   directOutboundFromReviewPage: boolean;
-  /** Outbound URL before `/api/scan/out` tracking (resolved master + fallbacks). */
+  /** Resolved master target destination URL (direct redirect, not tracked). */
   masterOutboundUrl: string;
   /** When true, public review page may call POST /api/ai/generate-review (server-gated). */
   aiReviewGenerationEnabled: boolean;
@@ -178,56 +192,43 @@ export type MasterQrScanFieldsInput = {
   master_qr_type?: string | null;
 };
 
-/**
- * Master outbound + `/api/scan/out` tracking URL — same rules as the public review page.
- * Shared with welcome email so the mailed QR matches live master QR behavior.
- */
+/** @deprecated Prefer `activeBusinessToDisplay` fields; kept for legacy callers. */
 export function computeMasterQrScanFields(
-  input: MasterQrScanFieldsInput,
+  input: MasterQrScanFieldsInput & { master_qr_target?: string | null; resource_urls?: unknown },
   origin: string,
 ): {
   effectiveMasterType: MasterQrType;
   masterOutboundUrl: string;
+  /** Permanent `/m/{businessId}` payload URL. */
   masterQrTrackUrl: string;
   reviewPageUrl: string;
 } {
   const o = origin.trim().replace(/\/+$/, "");
-  const parsedChannels = parseChannels(input.channels);
-  const channelsForDisplay =
-    parsedChannels &&
-    mergeWhatsAppUrlIntoChannels(
-      parsedChannels,
-      input.whatsapp_country_code,
-      input.whatsapp_number,
-    );
-  const masterChannelsUnknown: unknown =
-    channelsForDisplay !== null && channelsForDisplay !== undefined
-      ? channelsForDisplay
-      : {};
-  const masterBase = {
+  const targetCtx = {
+    master_qr_target: input.master_qr_target ?? null,
+    master_qr_type: input.master_qr_type ?? null,
+    slug: input.slug,
     google_url: input.google_url,
-    channels: masterChannelsUnknown,
+    channels: input.channels,
     whatsapp_country_code: input.whatsapp_country_code,
     whatsapp_number: input.whatsapp_number,
+    resource_urls: input.resource_urls,
   };
+  const reviewBase = buildPublicReviewQrUrl(o, input.slug);
+  const masterOutbound =
+    resolveMasterQrTargetDestination(targetCtx, o) ?? reviewBase;
   const effectiveMasterType =
-    normalizeMasterQrType(input.master_qr_type) ?? computeDefaultMasterQrType(masterBase);
-  const slugSeg = encodeURIComponent((input.slug ?? "").trim()) || "-";
-  const reviewBase = `${o}/r/${slugSeg}`;
-  const masterOutbound = resolveMasterOutboundUrl(
-    { ...masterBase, master_qr_type: effectiveMasterType },
-    reviewBase,
-  );
-  const masterQrTrackUrl = buildTrackedScanOutUrl(
-    input.id,
-    "master",
-    masterOutbound,
-    o,
-  );
+    normalizeMasterQrType(input.master_qr_type) ??
+    computeDefaultMasterQrType({
+      google_url: input.google_url,
+      channels: input.channels,
+      whatsapp_country_code: input.whatsapp_country_code,
+      whatsapp_number: input.whatsapp_number,
+    });
   return {
     effectiveMasterType,
     masterOutboundUrl: masterOutbound,
-    masterQrTrackUrl,
+    masterQrTrackUrl: buildMasterQrAbsoluteUrl(o, input.id),
     reviewPageUrl: reviewBase,
   };
 }
@@ -247,26 +248,34 @@ export function activeBusinessToDisplay(
       business.whatsapp_country_code,
       business.whatsapp_number,
     );
-  const scan = computeMasterQrScanFields(
-    {
-      id: business.id,
-      slug: business.slug,
-      google_url: business.google_url,
-      channels: business.channels,
-      whatsapp_country_code: business.whatsapp_country_code,
-      whatsapp_number: business.whatsapp_number,
-      master_qr_type: business.master_qr_type,
-    },
-    origin,
-  );
-  const effectiveMasterType = scan.effectiveMasterType;
-  const reviewBase = scan.reviewPageUrl;
-  const masterOutbound = scan.masterOutboundUrl;
-  const masterQrTrackUrl = scan.masterQrTrackUrl;
+  const targetCtx = {
+    master_qr_target:
+      typeof business.master_qr_target === "string" ? business.master_qr_target : null,
+    master_qr_type: business.master_qr_type,
+    slug: business.slug,
+    google_url: business.google_url,
+    channels: business.channels,
+    whatsapp_country_code: business.whatsapp_country_code,
+    whatsapp_number: business.whatsapp_number,
+    resource_urls: business.resource_urls,
+  };
+  const masterQrTarget = resolveStoredMasterQrTarget(targetCtx);
+  const reviewBase = buildPublicReviewQrUrl(origin, business.slug);
+  const masterQrUrl = buildMasterQrAbsoluteUrl(origin, business.id);
+  const masterOutbound =
+    resolveMasterQrTargetDestination(targetCtx, origin) ?? reviewBase;
   const directOutboundFromReviewPage =
     business.direct_redirect === true &&
     isSafeHttpUrl(masterOutbound) &&
     !masterScanDestinationsMatch(masterOutbound, reviewBase);
+  const effectiveMasterType =
+    normalizeMasterQrType(business.master_qr_type) ??
+    computeDefaultMasterQrType({
+      google_url: business.google_url,
+      channels: business.channels,
+      whatsapp_country_code: business.whatsapp_country_code,
+      whatsapp_number: business.whatsapp_number,
+    });
   const brandName =
     business.brand_name?.trim() || business.name?.trim() || "Business";
   const googleReviewUrl = business.google_url?.trim() ?? "";
@@ -299,7 +308,11 @@ export function activeBusinessToDisplay(
     rewardConfig: channelsForDisplay?.reward_config ?? [],
     channels: channelsForDisplay,
     masterQrType: effectiveMasterType,
-    masterQrTrackUrl,
+    masterQrTarget,
+    masterQrTargetLabel: formatMasterQrTargetLabel(masterQrTarget),
+    masterQrUrl,
+    masterQrTrackUrl: masterQrUrl,
+    publicReviewQrUrl: reviewBase,
     directOutboundFromReviewPage,
     masterOutboundUrl: masterOutbound,
     resourceUrls: parsePublicResourceUrls(business.resource_urls),
