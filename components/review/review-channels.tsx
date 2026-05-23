@@ -103,7 +103,7 @@ export function ReviewChannels({
         </p>
       </div>
 
-      <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-3 sm:mt-5 sm:gap-x-6 sm:gap-y-5">
+      <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-x-4 gap-y-3 sm:mt-5 sm:gap-x-4 sm:gap-y-5">
         {rowItems.map((item) =>
           item.kind === "call" ? (
             <ChannelIconLink
@@ -151,8 +151,8 @@ function ChannelIconLink({
       <Image
         src={iconSrc}
         alt=""
-        width={44}
-        height={44}
+        width={40}
+        height={40}
         className={iconImageClass}
       />
     </a>

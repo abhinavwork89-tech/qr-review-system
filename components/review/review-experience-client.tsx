@@ -68,7 +68,7 @@ export function ReviewExperienceClient({
       />
 
       <div className="lang-update mx-auto w-full max-w-lg flex-1 px-4 pb-8 pt-5 sm:px-5 sm:pb-10 sm:pt-6">
-        <div className="flex flex-col gap-5 sm:gap-10">
+        <div className="flex flex-col gap-5 sm:gap-5">
           <PromotionsSection banners={display.banners} />
 
           <section className="w-full">
