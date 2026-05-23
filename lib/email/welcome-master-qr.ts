@@ -1,11 +1,18 @@
 import type { QrImageAsset } from "@/emails/types";
-import { getPublicAppOrigin } from "@/lib/email/app-public-url";
+import { resolveEmailPublicAppOrigin } from "@/lib/public-app-origin";
 import { isSafeHttpUrl } from "@/lib/review/business-config";
 import { computeMasterQrScanFields } from "@/lib/review/display-model";
-import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
+import { renderQrPngBuffer } from "@/lib/qr/render-qr-png-buffer";
 import type { MasterQrType } from "@/lib/scan/master-qr";
 
 const MAX_QR_PAYLOAD_LEN = 3200;
+const WELCOME_QR_CID = "welcome-master-qr";
+
+export type WelcomeEmailQrAttachment = {
+  filename: string;
+  content: string;
+  content_id: string;
+};
 
 export type WelcomeMasterQrInput = {
   businessId: string;
@@ -18,40 +25,25 @@ export type WelcomeMasterQrInput = {
   master_qr_type: string | null;
 };
 
-function safeGoogleReviewUrl(google_url: string | null): string | null {
-  const u = (google_url ?? "").trim();
-  return u.length > 0 && isSafeHttpUrl(u) ? u : null;
-}
-
-function buildQrPngProxyUrl(appOrigin: string, payloadUrl: string): string | null {
-  try {
-    const base = appOrigin.trim().replace(/\/+$/, "");
-    const u = new URL(`${base}/api/qr-png`);
-    u.searchParams.set("payload", payloadUrl);
-    if (u.href.length > 8000) return null;
-    return u.href;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Welcome email: single master QR image (tracked `/api/scan/out` when possible).
- * Never uses `resource_urls` / digital assets.
+ * Welcome email: inline PNG QR (CID attachment) encoding the public review page URL.
+ * Never uses `resource_urls` / digital assets or remote `/api/qr-png` fetches in `<img src>`.
  */
-export function buildWelcomeEmailMasterQrContext(input: WelcomeMasterQrInput): {
+export async function buildWelcomeEmailMasterQrContext(
+  input: WelcomeMasterQrInput,
+): Promise<{
   qrImages: QrImageAsset[];
+  qrAttachments: WelcomeEmailQrAttachment[];
   debug: {
     master_qr_type: MasterQrType;
     resolvedScanOutbound: string;
     masterTrackUrl: string;
     finalQrPayload: string;
     finalQrImageUrl: string | null;
-    payloadSource: "master_track" | "review_plain" | "google_track" | "none";
+    payloadSource: "review_plain";
   };
-} {
-  const origin =
-    getPublicAppOrigin()?.trim().replace(/\/+$/, "") || "http://localhost:3000";
+}> {
+  const origin = resolveEmailPublicAppOrigin().replace(/\/+$/, "");
 
   const scan = computeMasterQrScanFields(
     {
@@ -67,58 +59,43 @@ export function buildWelcomeEmailMasterQrContext(input: WelcomeMasterQrInput): {
   );
 
   const brandLabel = input.brandName.trim() || "Your business";
+  const payload = scan.reviewPageUrl;
+  const payloadSource = "review_plain" as const;
 
-  let payload = scan.masterQrTrackUrl;
-  let payloadSource: "master_track" | "review_plain" | "google_track" | "none" =
-    "master_track";
+  const emptyDebug = {
+    master_qr_type: scan.effectiveMasterType,
+    resolvedScanOutbound: scan.masterOutboundUrl,
+    masterTrackUrl: scan.masterQrTrackUrl,
+    finalQrPayload: "",
+    finalQrImageUrl: null,
+    payloadSource,
+  };
 
   if (!isSafeHttpUrl(payload) || payload.length > MAX_QR_PAYLOAD_LEN) {
-    payload = `${origin}/r/${input.slug.trim()}`;
-    payloadSource = "review_plain";
+    return { qrImages: [], qrAttachments: [], debug: emptyDebug };
   }
 
-  if (!isSafeHttpUrl(payload) || payload.length > MAX_QR_PAYLOAD_LEN) {
-    const g = safeGoogleReviewUrl(input.google_url);
-    if (g) {
-      payload = buildTrackedScanOutUrl(input.businessId, "google", g, origin);
-      payloadSource = "google_track";
-    }
-  }
-
-  if (!isSafeHttpUrl(payload) || payload.length > MAX_QR_PAYLOAD_LEN) {
+  const png = await renderQrPngBuffer(payload);
+  if (!png) {
     return {
       qrImages: [],
-      debug: {
-        master_qr_type: scan.effectiveMasterType,
-        resolvedScanOutbound: scan.masterOutboundUrl,
-        masterTrackUrl: scan.masterQrTrackUrl,
-        finalQrPayload: "",
-        finalQrImageUrl: null,
-        payloadSource: "none",
-      },
-    };
-  }
-
-  const finalQrImageUrl = buildQrPngProxyUrl(origin, payload);
-  if (!finalQrImageUrl) {
-    return {
-      qrImages: [],
-      debug: {
-        master_qr_type: scan.effectiveMasterType,
-        resolvedScanOutbound: scan.masterOutboundUrl,
-        masterTrackUrl: scan.masterQrTrackUrl,
-        finalQrPayload: payload,
-        finalQrImageUrl: null,
-        payloadSource,
-      },
+      qrAttachments: [],
+      debug: { ...emptyDebug, finalQrPayload: payload },
     };
   }
 
   return {
     qrImages: [
       {
-        src: finalQrImageUrl,
-        alt: `Master QR — ${brandLabel}`,
+        src: `cid:${WELCOME_QR_CID}`,
+        alt: `Review QR — ${brandLabel}`,
+      },
+    ],
+    qrAttachments: [
+      {
+        filename: "master-qr.png",
+        content: png.toString("base64"),
+        content_id: WELCOME_QR_CID,
       },
     ],
     debug: {
@@ -126,7 +103,7 @@ export function buildWelcomeEmailMasterQrContext(input: WelcomeMasterQrInput): {
       resolvedScanOutbound: scan.masterOutboundUrl,
       masterTrackUrl: scan.masterQrTrackUrl,
       finalQrPayload: payload,
-      finalQrImageUrl,
+      finalQrImageUrl: `cid:${WELCOME_QR_CID}`,
       payloadSource,
     },
   };

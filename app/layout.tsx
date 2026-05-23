@@ -7,10 +7,10 @@ import "./assets/styles/mainStyle.scss";
 
 export const metadata: Metadata = {
   title: {
-    default: "QR Review",
+    default: "One Core App - QR Review",
     template: "%s · QR Review",
   },
-  description: "QR review system",
+  description: "Scan. Review. Reward. A smart customer engagement platform powered by QR, AI reviews, rewards, and business insights.",
 };
 
 export default function RootLayout({

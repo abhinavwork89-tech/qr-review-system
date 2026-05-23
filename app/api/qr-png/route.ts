@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import QRCode from "qrcode";
 import { isSafeHttpUrl } from "@/lib/review/business-config";
+import { renderQrPngBuffer } from "@/lib/qr/render-qr-png-buffer";
 
 export const runtime = "nodejs";
 
@@ -55,12 +55,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const buf = await QRCode.toBuffer(payloadRaw, {
-      type: "png",
-      width: 220,
-      margin: 1,
-      errorCorrectionLevel: "M",
-    });
+    const buf = await renderQrPngBuffer(payloadRaw);
+    if (!buf) {
+      return new NextResponse("QR render failed", { status: 500 });
+    }
     return new NextResponse(new Uint8Array(buf), {
       status: 200,
       headers: {

@@ -1,5 +1,6 @@
 import { WelcomeEmail } from "@/emails/templates/WelcomeEmail";
 import type { QrImageAsset } from "@/emails/types";
+import type { WelcomeEmailQrAttachment } from "@/lib/email/welcome-master-qr";
 import { getAppSettingsPublic } from "@/lib/data/app-settings";
 import { emailFlowWarn } from "@/lib/email/email-flow-log";
 import { resolveBusinessRecipient } from "@/lib/email/resolve-recipient";
@@ -18,6 +19,7 @@ export type SendWelcomeEmailInput = {
   primaryColor: string | null;
   reviewPageUrl: string;
   qrImages: QrImageAsset[];
+  qrAttachments?: WelcomeEmailQrAttachment[];
   previewText?: string;
   greeting?: string;
   title?: string;
@@ -51,6 +53,11 @@ export async function sendWelcomeEmail(input: SendWelcomeEmailInput) {
     eventTrigger: "welcome",
     dedupeKey: input.dedupeKey,
     correlationId: input.businessId,
+    attachments: input.qrAttachments?.map((a) => ({
+      filename: a.filename,
+      content: a.content,
+      content_id: a.content_id,
+    })),
     react: (
       <WelcomeEmail
         oneCoreLogoUrl={settings.brandingLogoUrl}

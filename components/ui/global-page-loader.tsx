@@ -3,6 +3,30 @@
 import { usePathname, useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 
+/** Background fetches that already show inline loading UI (e.g. AI suggestion skeletons). */
+const GLOBAL_LOADER_EXEMPT_FETCH_PATHS = new Set(["/api/ai/generate-review"]);
+
+function isGlobalLoaderExemptFetch(input: RequestInfo | URL): boolean {
+  try {
+    let pathname: string;
+    if (typeof input === "string") {
+      const url = input.startsWith("http")
+        ? new URL(input)
+        : new URL(input, window.location.origin);
+      pathname = url.pathname;
+    } else if (input instanceof URL) {
+      pathname = input.pathname;
+    } else if (input instanceof Request) {
+      pathname = new URL(input.url, window.location.origin).pathname;
+    } else {
+      return false;
+    }
+    return GLOBAL_LOADER_EXEMPT_FETCH_PATHS.has(pathname);
+  } catch {
+    return false;
+  }
+}
+
 export function GlobalPageLoader() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -26,19 +50,24 @@ export function GlobalPageLoader() {
     };
 
     window.fetch = (async (...args: Parameters<typeof fetch>) => {
-      inFlightRef.current += 1;
-      sync();
+      const skipLoader = isGlobalLoaderExemptFetch(args[0]);
+      if (!skipLoader) {
+        inFlightRef.current += 1;
+        sync();
+      }
       try {
         return await originalFetch(...args);
       } finally {
-        inFlightRef.current = Math.max(0, inFlightRef.current - 1);
-        // Submit / click can set navPending expecting a route change. If no navigation
-        // happens (e.g. login error on same URL), pathname never updates — clear pending
-        // once all wrapped fetches finish so the overlay cannot stick forever.
-        if (inFlightRef.current === 0) {
-          navPendingRef.current = false;
+        if (!skipLoader) {
+          inFlightRef.current = Math.max(0, inFlightRef.current - 1);
+          // Submit / click can set navPending expecting a route change. If no navigation
+          // happens (e.g. login error on same URL), pathname never updates — clear pending
+          // once all wrapped fetches finish so the overlay cannot stick forever.
+          if (inFlightRef.current === 0) {
+            navPendingRef.current = false;
+          }
+          sync();
         }
-        sync();
       }
     }) as typeof window.fetch;
 

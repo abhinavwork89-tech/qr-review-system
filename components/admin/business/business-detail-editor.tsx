@@ -59,6 +59,7 @@ import {
   validateOptionalGoogleUrl,
 } from "@/lib/admin/business-form-validation";
 import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
+import { resolvePublicAppOrigin } from "@/lib/public-app-origin";
 import { adminQrLabelToScanType } from "@/lib/scan/qr-types";
 import {
   computeDefaultMasterQrType,
@@ -2618,10 +2619,8 @@ function QrCodeCard({
 
 function buildBusinessPublicUrl(slug: string): string {
   const safeSlug = slug.trim() || "-";
-  if (typeof window !== "undefined" && window.location?.origin) {
-    return `${window.location.origin}/r/${safeSlug}`;
-  }
-  return `http://localhost:3000/r/${safeSlug}`;
+  const base = resolvePublicAppOrigin().replace(/\/+$/, "");
+  return `${base}/r/${safeSlug}`;
 }
 
 
