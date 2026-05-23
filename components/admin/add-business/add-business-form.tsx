@@ -65,6 +65,7 @@ import {
   validateSocialChannelUrl,
   validateYouTubeChannelUrl,
 } from "@/lib/admin/business-form-validation";
+import { isSafeYouTubeUrl } from "@/lib/review/youtube-url";
 
 type Errors = Partial<Record<string, string>>;
 type Touched = Partial<
@@ -1753,6 +1754,24 @@ export function AddBusinessForm({
                 current: values.masterQrType,
                 onSelect: (mt) => patch("masterQrType")(mt),
                 disabled: !values.facebookEnabled || !isSafeHttpUrl(values.facebookUrl.trim()),
+              }}
+            />
+            <ChannelRow
+              label="YouTube"
+              urlId="youtubeUrl"
+              url={values.youtubeUrl}
+              onUrlChange={patch("youtubeUrl")}
+              onUrlBlur={() => markTouched("youtubeUrl")}
+              enabled={values.youtubeEnabled}
+              onEnabledChange={patch("youtubeEnabled")}
+              urlError={errors.youtubeUrl}
+              masterOption={{
+                groupName: MASTER_QR_GROUP_ADD,
+                value: "youtube",
+                current: values.masterQrType,
+                onSelect: (mt) => patch("masterQrType")(mt),
+                disabled:
+                  !values.youtubeEnabled || !isSafeYouTubeUrl(values.youtubeUrl.trim()),
               }}
             />
             <ChannelRow

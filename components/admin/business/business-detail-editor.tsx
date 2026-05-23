@@ -1962,7 +1962,11 @@ export function BusinessDetailEditor({
           </FormField>
         </FormSection>
 
-        <FormSection title="SECTION 5: Channels" description="Enable links and choose exactly one Master QR for the primary scan destination.">
+        <FormSection
+          title="SECTION 5: Channels"
+          description="Enable links and choose exactly one Master QR for the primary scan destination."
+        >
+          {/* URL channel order: lib/admin/admin-url-channels.ts (ADMIN_URL_CHANNEL_DEFS) */}
           {isEditing && masterQrError ? (
             <p
               className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm font-medium text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/40 dark:text-amber-200"
