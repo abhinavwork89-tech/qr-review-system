@@ -11,12 +11,22 @@ export function ReviewMasterQrLazy({
   slug,
   brandName,
   logoUrl,
-  trackUrl,
+  businessId,
+  masterQrUrl,
 }: {
   slug: string;
   brandName?: string;
   logoUrl?: string | null;
-  trackUrl: string;
+  businessId: string;
+  masterQrUrl: string;
 }) {
-  return <ReviewMasterQr slug={slug} brandName={brandName} logoUrl={logoUrl} trackUrl={trackUrl} />;
+  return (
+    <ReviewMasterQr
+      slug={slug}
+      brandName={brandName}
+      logoUrl={logoUrl}
+      businessId={businessId}
+      masterQrUrl={masterQrUrl}
+    />
+  );
 }

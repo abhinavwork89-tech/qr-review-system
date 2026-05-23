@@ -36,11 +36,13 @@ export function MasterEmailLayout({
   footerCopyrightYear,
 }: MasterEmailLayoutProps) {
   const showCta = Boolean(ctaText?.trim() && ctaUrl?.trim());
-  const showQr = Boolean(qrImages && qrImages.length > 0);
+  const hasInlineQr = Boolean(qrImages && qrImages.length > 0);
+  const hasQrHint = Boolean(qrSectionHint?.trim());
+  const showQr = hasInlineQr || hasQrHint;
   const qrHeading =
     (qrSectionHeading?.trim() || "").length > 0
       ? qrSectionHeading!.trim()
-      : "Your QR codes";
+      : "Your QR code";
 
   return (
     <Html lang="en">
@@ -179,37 +181,39 @@ export function MasterEmailLayout({
                 >
                   {qrHeading}
                 </Text>
-                {qrSectionHint?.trim() ? (
+                {hasQrHint ? (
                   <Text
                     style={{
-                      margin: "0 0 14px",
-                      fontSize: "13px",
-                      lineHeight: "1.5",
+                      margin: hasInlineQr ? "0 0 14px" : "0",
+                      fontSize: "14px",
+                      lineHeight: "1.6",
                       color: bodyText,
                     }}
                   >
-                    {qrSectionHint.trim()}
+                    {qrSectionHint!.trim()}
                   </Text>
                 ) : null}
-                {qrImages!.map((img, idx) => (
-                  <Section key={idx} style={{ marginBottom: "16px" }}>
-                    <Img
-                      src={img.src}
-                      alt={img.alt}
-                      width={200}
-                      style={{
-                        display: "block",
-                        width: "200px",
-                        height: "auto",
-                        maxWidth: "200px",
-                        maxHeight: "220px",
-                        objectFit: "contain",
-                        borderRadius: "8px",
-                        border: "1px solid #e4e4e7",
-                      }}
-                    />
-                  </Section>
-                ))}
+                {hasInlineQr
+                  ? qrImages!.map((img, idx) => (
+                      <Section key={idx} style={{ marginTop: "14px", marginBottom: "16px" }}>
+                        <Img
+                          src={img.src}
+                          alt={img.alt}
+                          width={200}
+                          style={{
+                            display: "block",
+                            width: "200px",
+                            height: "auto",
+                            maxWidth: "200px",
+                            maxHeight: "220px",
+                            objectFit: "contain",
+                            borderRadius: "8px",
+                            border: "1px solid #e4e4e7",
+                          }}
+                        />
+                      </Section>
+                    ))
+                  : null}
               </Section>
             ) : null}
 

@@ -47,7 +47,7 @@ export function WelcomeEmail({
               color: "#18181b",
             }}
           >
-            {`We are thrilled to have ${displayBrand} on board. Your review experience is configured, and the QR codes below link customers straight to your public review page.`}
+            {`We are thrilled to have ${displayBrand} on board. Your review experience is configured — use the attached Master QR for print and signage, or share your review page link in campaigns.`}
           </Text>
           <Text
             style={{
@@ -57,7 +57,7 @@ export function WelcomeEmail({
               color: "#18181b",
             }}
           >
-            {`Tip for ${owner}: bookmark your review page so you can share it in campaigns, receipts, and table tents alongside the printed QR codes.`}
+            {`Tip for ${owner}: bookmark your review page so you can share it in campaigns, receipts, and table tents alongside your printed Master QR.`}
           </Text>
           {extraMessage ? (
             <Text

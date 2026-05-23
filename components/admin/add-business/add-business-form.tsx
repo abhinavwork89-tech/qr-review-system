@@ -9,6 +9,12 @@ import { FormField } from "@/components/admin/add-business/form-field";
 import { FormSection } from "@/components/admin/add-business/form-section";
 import { FormToggle } from "@/components/admin/add-business/form-toggle";
 import { RewardGameModeSelector } from "@/components/admin/business/reward-game-mode-display";
+import { MasterQrTargetSelector } from "@/components/admin/business/master-qr-target-selector";
+import { resolvePublicAppOrigin } from "@/lib/public-app-origin";
+import {
+  type MasterQrTarget,
+  validateMasterQrTargetForPersist,
+} from "@/lib/scan/master-qr-target";
 import { formInputBase, formInputError, formSelectBase } from "@/components/admin/add-business/form-styles";
 import { validateAndMergeFiles, BUSINESS_IMAGE_ACCEPT } from "@/components/admin/add-business/upload-utils";
 import {
@@ -60,7 +66,7 @@ import { adminAiLabels } from "@/lib/i18n/admin-ai-labels";
 import {
   validateAiDailyLimit,
   validateAiSuggestionsCount,
-  validateMasterQrSelection,
+  validateMasterQrTargetSelection,
   validateOptionalGoogleUrl,
   validateSocialChannelUrl,
   validateYouTubeChannelUrl,
@@ -240,11 +246,12 @@ function validate(
   if (docErrs.identity_proof_urls) e.identity_proof_urls = docErrs.identity_proof_urls;
   if (docErrs.client_photo_url) e.client_photo_url = docErrs.client_photo_url;
 
-  const masterErr = validateMasterQrSelection(
-    masterBaseFromFormValues(values),
-    values.masterQrType,
+  const masterErr = validateMasterQrTargetSelection(
+    masterTargetContextFromForm(values),
+    values.masterQrTarget,
+    resolvePublicAppOrigin(),
   );
-  if (masterErr) e.masterQrType = masterErr;
+  if (masterErr) e.masterQrTarget = masterErr;
 
   const aiDailyErr = validateAiDailyLimit(values.aiDailyLimit);
   if (aiDailyErr) e.aiDailyLimit = aiDailyErr;
@@ -253,8 +260,6 @@ function validate(
 
   return e;
 }
-
-const MASTER_QR_GROUP_ADD = "masterQrAddBusiness";
 
 const AI_ADMIN = adminAiLabels();
 
@@ -278,6 +283,23 @@ function masterBaseFromFormValues(v: FormValues) {
       ? normalizeDialCode(v.whatsappCountryCode || DEFAULT_DIAL_CODE)
       : null,
     whatsapp_number: v.whatsappEnabled ? clampWhatsAppLocalInput(v.whatsappNumber) : null,
+  };
+}
+
+function provisionalSlugFromBrand(brand: string): string {
+  const base = brand
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-|-$/g, "");
+  return base || "business";
+}
+
+function masterTargetContextFromForm(v: FormValues, resourceUrls: string[] = []) {
+  return {
+    slug: provisionalSlugFromBrand(v.brandName || v.fullName),
+    ...masterBaseFromFormValues(v),
+    resource_urls: resourceUrls,
   };
 }
 
@@ -317,6 +339,7 @@ type FormValues = {
   identityType: string;
   identityNumber: string;
   masterQrType: MasterQrType;
+  masterQrTarget: MasterQrTarget;
   aiEnabled: boolean;
   aiReviewLanguage: "en" | "hi" | "hinglish";
   aiDailyLimit: string;
@@ -359,6 +382,7 @@ const initialValues: FormValues = {
   identityType: "aadhaar",
   identityNumber: "",
   masterQrType: "google_review",
+  masterQrTarget: "review_page",
   aiEnabled: false,
   aiReviewLanguage: "en",
   aiDailyLimit: "50",
@@ -586,8 +610,12 @@ export function AddBusinessForm({
         );
         apply("xUrl", validateSocialChannelUrl(norm.xEnabled, norm.xUrl));
         apply(
-          "masterQrType",
-          validateMasterQrSelection(masterBaseFromFormValues(norm), norm.masterQrType),
+          "masterQrTarget",
+          validateMasterQrTargetSelection(
+            masterTargetContextFromForm(norm),
+            norm.masterQrTarget,
+            resolvePublicAppOrigin(),
+          ),
         );
         return next;
       });
@@ -639,14 +667,18 @@ export function AddBusinessForm({
 
   useEffect(() => {
     const v = valuesRef.current;
-    const base = masterBaseFromFormValues(v);
-    if (validateMasterQrForPersist({ ...base, master_qr_type: v.masterQrType }) === null) {
-      return;
-    }
-    const d = computeDefaultMasterQrType(base);
-    if (d !== v.masterQrType) {
-      setValues((s) => (s.masterQrType === d ? s : { ...s, masterQrType: d }));
-    }
+    const err = validateMasterQrTargetForPersist(
+      masterTargetContextFromForm(v),
+      v.masterQrTarget,
+      resolvePublicAppOrigin(),
+    );
+    if (!err || v.masterQrTarget === "review_page") return;
+    const syncId = window.setTimeout(() => {
+      setValues((s) =>
+        s.masterQrTarget === "review_page" ? s : { ...s, masterQrTarget: "review_page" },
+      );
+    }, 0);
+    return () => window.clearTimeout(syncId);
   }, [
     values.googleReviewUrl,
     values.instagramEnabled,
@@ -662,6 +694,9 @@ export function AddBusinessForm({
     values.websiteUrl,
     values.xEnabled,
     values.xUrl,
+    values.masterQrTarget,
+    values.brandName,
+    values.fullName,
   ]);
 
   const validatedFieldKeys: (keyof FormValues)[] = [
@@ -682,7 +717,7 @@ export function AddBusinessForm({
     "youtubeUrl",
     "websiteUrl",
     "xUrl",
-    "masterQrType",
+    "masterQrTarget",
     "aiDailyLimit",
     "aiSuggestionsCount",
   ];
@@ -1005,6 +1040,7 @@ export function AddBusinessForm({
         banner_urls: bannerUrls,
         resource_urls: resourceUrls,
         master_qr_type: normalizedValues.masterQrType,
+        master_qr_target: normalizedValues.masterQrTarget,
         ai_enabled: normalizedValues.aiEnabled,
         ai_review_language: normalizedValues.aiReviewLanguage,
         ai_daily_limit: Number.parseInt(normalizedValues.aiDailyLimit, 10) || 50,
@@ -1577,19 +1613,6 @@ export function AddBusinessForm({
                 className={fieldClass("googleReviewUrl")}
                 placeholder="https://g.page/..."
               />
-              <label className="mt-2 flex cursor-pointer items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-                <input
-                  type="radio"
-                  name={MASTER_QR_GROUP_ADD}
-                  checked={values.masterQrType === "google_review"}
-                  disabled={
-                    !values.googleReviewUrl.trim() || !isSafeHttpUrl(values.googleReviewUrl.trim())
-                  }
-                  onChange={() => patch("masterQrType")("google_review")}
-                  className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-                />
-                <span>Set as Master QR (Google Review)</span>
-              </label>
             </FormField>
             <FormField label="Rating Threshold" htmlFor="ratingThreshold">
               <select
@@ -1605,6 +1628,26 @@ export function AddBusinessForm({
                 <option value="5">5 stars</option>
               </select>
             </FormField>
+          </div>
+          <div className="rounded-xl border border-zinc-200/80 bg-zinc-50/40 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
+            <p className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Master QR target</p>
+            <p className="mt-1 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
+              Printed and emailed QR codes use <code className="text-[11px]">/m/{"{businessId}"}</code> and
+              follow this target when scanned.
+            </p>
+            <div className="mt-3">
+              <MasterQrTargetSelector
+                value={values.masterQrTarget}
+                context={masterTargetContextFromForm(values)}
+                appOrigin={resolvePublicAppOrigin()}
+                onSelect={(t) => patch("masterQrTarget")(t)}
+              />
+            </div>
+            {errors.masterQrTarget ? (
+              <p className="mt-2 text-sm text-red-600 dark:text-red-400" role="alert">
+                {errors.masterQrTarget}
+              </p>
+            ) : null}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormToggle
@@ -1648,13 +1691,8 @@ export function AddBusinessForm({
 
         <FormSection
           title="SECTION 5: Channels"
-          description="Optional links with per-channel enablement. Exactly one Master QR is active; pick which scan destination customers use first."
+          description="Optional links shown on the public review page (tracked separately from master QR)."
         >
-          {errors.masterQrType ? (
-            <p className="mb-3 text-sm text-red-600 dark:text-red-400" role="alert">
-              {errors.masterQrType}
-            </p>
-          ) : null}
           <div className="grid gap-4 lg:grid-cols-2">
             <ChannelRow
               label="Instagram"
@@ -1665,13 +1703,6 @@ export function AddBusinessForm({
               enabled={values.instagramEnabled}
               onEnabledChange={patch("instagramEnabled")}
               urlError={errors.instagramUrl}
-              masterOption={{
-                groupName: MASTER_QR_GROUP_ADD,
-                value: "instagram",
-                current: values.masterQrType,
-                onSelect: (mt) => patch("masterQrType")(mt),
-                disabled: !values.instagramEnabled || !isSafeHttpUrl(values.instagramUrl.trim()),
-              }}
             />
             <div className="space-y-3 rounded-xl border border-zinc-200/80 bg-zinc-50/30 p-4 dark:border-zinc-800 dark:bg-zinc-950/30">
               <WhatsAppChannelFields
@@ -1696,25 +1727,6 @@ export function AddBusinessForm({
                 dialSelectId="whatsappCountryCode"
                 localInputId="whatsappNumber"
               />
-              <label className="flex cursor-pointer items-center gap-2 text-sm text-zinc-600 dark:text-zinc-400">
-                <input
-                  type="radio"
-                  name={MASTER_QR_GROUP_ADD}
-                  checked={values.masterQrType === "whatsapp"}
-                  disabled={(() => {
-                    if (!values.whatsappEnabled) return true;
-                    const waE = getWhatsAppFormErrors({
-                      enabled: true,
-                      countryDialRaw: values.whatsappCountryCode,
-                      localRaw: values.whatsappNumber,
-                    });
-                    return Boolean(waE.whatsappNumber || waE.whatsappCountryCode);
-                  })()}
-                  onChange={() => patch("masterQrType")("whatsapp")}
-                  className="accent-indigo-600 disabled:cursor-not-allowed disabled:opacity-50"
-                />
-                <span>Set as Master QR (WhatsApp)</span>
-              </label>
             </div>
             <CallChannelFields
               enabled={values.callEnabled}
@@ -1748,13 +1760,6 @@ export function AddBusinessForm({
               enabled={values.facebookEnabled}
               onEnabledChange={patch("facebookEnabled")}
               urlError={errors.facebookUrl}
-              masterOption={{
-                groupName: MASTER_QR_GROUP_ADD,
-                value: "facebook",
-                current: values.masterQrType,
-                onSelect: (mt) => patch("masterQrType")(mt),
-                disabled: !values.facebookEnabled || !isSafeHttpUrl(values.facebookUrl.trim()),
-              }}
             />
             <ChannelRow
               label="YouTube"
@@ -1765,14 +1770,6 @@ export function AddBusinessForm({
               enabled={values.youtubeEnabled}
               onEnabledChange={patch("youtubeEnabled")}
               urlError={errors.youtubeUrl}
-              masterOption={{
-                groupName: MASTER_QR_GROUP_ADD,
-                value: "youtube",
-                current: values.masterQrType,
-                onSelect: (mt) => patch("masterQrType")(mt),
-                disabled:
-                  !values.youtubeEnabled || !isSafeYouTubeUrl(values.youtubeUrl.trim()),
-              }}
             />
             <ChannelRow
               label="Website"
@@ -1783,13 +1780,6 @@ export function AddBusinessForm({
               enabled={values.websiteEnabled}
               onEnabledChange={patch("websiteEnabled")}
               urlError={errors.websiteUrl}
-              masterOption={{
-                groupName: MASTER_QR_GROUP_ADD,
-                value: "website",
-                current: values.masterQrType,
-                onSelect: (mt) => patch("masterQrType")(mt),
-                disabled: !values.websiteEnabled || !isSafeHttpUrl(values.websiteUrl.trim()),
-              }}
             />
             <ChannelRow
               label="X (Twitter)"
@@ -1800,13 +1790,6 @@ export function AddBusinessForm({
               enabled={values.xEnabled}
               onEnabledChange={patch("xEnabled")}
               urlError={errors.xUrl}
-              masterOption={{
-                groupName: MASTER_QR_GROUP_ADD,
-                value: "twitter",
-                current: values.masterQrType,
-                onSelect: (mt) => patch("masterQrType")(mt),
-                disabled: !values.xEnabled || !isSafeHttpUrl(values.xUrl.trim()),
-              }}
             />
           </div>
         </FormSection>

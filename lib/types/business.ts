@@ -57,6 +57,8 @@ export type BusinessRow = {
   resource_urls?: unknown;
   /** Stored master QR key; null/invalid rows fall back at read time. */
   master_qr_type?: MasterQrType | null;
+  /** Runtime master QR target (`review_page`, `google_review`, …). */
+  master_qr_target?: string | null;
   ai_enabled?: boolean | null;
   ai_review_language?: string | null;
   ai_daily_limit?: number | null;
