@@ -37,6 +37,12 @@ export type SendAppEmailParams = {
   dedupeKey?: string;
   /** Optional id for correlating logs (e.g. business UUID). */
   correlationId?: string;
+  /** Inline images (use `cid:` in template `Img` src). */
+  attachments?: Array<{
+    filename: string;
+    content: string;
+    content_id?: string;
+  }>;
 };
 
 function resendErrorHint(message: string): string | undefined {
@@ -146,6 +152,7 @@ export async function sendAppEmail(params: SendAppEmailParams) {
         subject: params.subject,
         text: plainTextForSend,
         ...(params.replyTo ? { replyTo: params.replyTo } : {}),
+        ...(params.attachments?.length ? { attachments: params.attachments } : {}),
       }
     : {
         from,
@@ -154,6 +161,7 @@ export async function sendAppEmail(params: SendAppEmailParams) {
         react: params.react,
         text: plainTextForSend,
         ...(params.replyTo ? { replyTo: params.replyTo } : {}),
+        ...(params.attachments?.length ? { attachments: params.attachments } : {}),
       };
 
   const { data, error } = await resend.emails.send(

@@ -6,6 +6,9 @@ export type AppSettingsPatchResult =
   | { ok: true; id: string }
   | { ok: false; error: string; code?: string };
 
+/** Schema singleton primary key (`app_settings.id` smallint CHECK = 1). */
+export const APP_SETTINGS_SINGLETON_ID = 1;
+
 /** Defaults for first insert when `app_settings` is empty (UUID or legacy id). */
 export function defaultAppSettingsInsertRow(): Record<string, unknown> {
   const year = new Date().getUTCFullYear();
@@ -50,6 +53,58 @@ export async function getAppSettingsSingletonId(
   return readRowId(data);
 }
 
+async function updateAppSettingsById(
+  client: SupabaseClient,
+  id: string,
+  payload: Record<string, unknown>,
+): Promise<AppSettingsPatchResult> {
+  const { error } = await client.from("app_settings").update(payload).eq("id", id);
+  if (error) {
+    return { ok: false, error: error.message, code: error.code };
+  }
+  return { ok: true, id };
+}
+
+/**
+ * Insert the singleton row when the table is empty; returns the new row id.
+ */
+async function insertAppSettingsSingleton(
+  client: SupabaseClient,
+  payload: Record<string, unknown>,
+): Promise<AppSettingsPatchResult> {
+  const insertRow = {
+    id: APP_SETTINGS_SINGLETON_ID,
+    ...defaultAppSettingsInsertRow(),
+    ...payload,
+  };
+
+  const { data, error } = await client
+    .from("app_settings")
+    .insert(insertRow)
+    .select("id")
+    .single();
+
+  if (error) {
+    if (error.code === "23505") {
+      const existingId = await getAppSettingsSingletonId(client);
+      if (existingId) {
+        return updateAppSettingsById(client, existingId, payload);
+      }
+    }
+    return { ok: false, error: error.message, code: error.code };
+  }
+
+  const newId = readRowId(data) ?? (await getAppSettingsSingletonId(client));
+  if (!newId) {
+    return {
+      ok: false,
+      error: "Insert succeeded but no row id returned",
+      code: "PGRST116",
+    };
+  }
+  return { ok: true, id: newId };
+}
+
 /**
  * Patch the singleton settings row by id; insert a default row when the table is empty.
  */
@@ -65,29 +120,8 @@ export async function patchAppSettingsSingleton(
   };
 
   if (existingId) {
-    const { error } = await client
-      .from("app_settings")
-      .update(payload)
-      .eq("id", existingId);
-    if (error) {
-      return { ok: false, error: error.message, code: error.code };
-    }
-    return { ok: true, id: existingId };
+    return updateAppSettingsById(client, existingId, payload);
   }
 
-  const { data, error } = await client
-    .from("app_settings")
-    .insert({ ...defaultAppSettingsInsertRow(), ...payload })
-    .select("id")
-    .maybeSingle();
-
-  if (error) {
-    return { ok: false, error: error.message, code: error.code };
-  }
-
-  const newId = readRowId(data);
-  if (!newId) {
-    return { ok: false, error: "Insert succeeded but no row id returned" };
-  }
-  return { ok: true, id: newId };
+  return insertAppSettingsSingleton(client, payload);
 }

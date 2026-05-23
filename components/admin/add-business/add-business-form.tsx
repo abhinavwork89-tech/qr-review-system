@@ -1173,7 +1173,7 @@ export function AddBusinessForm({
                 onChange={(e) => patch("fullName")(e.target.value)}
                 onBlur={() => markTouched("fullName")}
                 className={fieldClass("fullName")}
-                placeholder="Jane Cooper"
+                placeholder="Enter Full Name"
               />
             </FormField>
             <FormField label="Email" htmlFor="email" required error={errors.email}>
@@ -1185,7 +1185,7 @@ export function AddBusinessForm({
                 onChange={(e) => patch("email")(e.target.value)}
                 onBlur={() => markTouched("email")}
                 className={fieldClass("email")}
-                placeholder="jane@company.com"
+                placeholder="Enter Email Id"
               />
             </FormField>
             <FormField label="Mobile Number" htmlFor="mobile" required error={errors.mobile}>
@@ -1223,7 +1223,7 @@ export function AddBusinessForm({
                   }
                   onBlur={() => markTouched("mobile")}
                   className={`${fieldClass("mobile")} flex-1`}
-                  placeholder="9876543210"
+                  placeholder="Enter Email Id"
                 />
               </div>
             </FormField>

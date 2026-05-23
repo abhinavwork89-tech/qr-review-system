@@ -49,7 +49,7 @@ export function scheduleWelcomeEmailAfterCreate(input: {
       });
       const brandLabel =
         input.brandName.trim() || input.name.trim() || "Your business";
-      const { qrImages, debug } = buildWelcomeEmailMasterQrContext({
+      const { qrImages, qrAttachments, debug } = await buildWelcomeEmailMasterQrContext({
         businessId: input.businessId,
         slug: input.slug,
         brandName: brandLabel,
@@ -83,6 +83,7 @@ export function scheduleWelcomeEmailAfterCreate(input: {
         primaryColor: input.primaryColor,
         reviewPageUrl: buildReviewPageUrl(input.slug),
         qrImages,
+        qrAttachments,
       });
       emailFlowInfo("lifecycle_trigger_finished", {
         eventTrigger: "welcome",
