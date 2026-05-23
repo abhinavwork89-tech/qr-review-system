@@ -1,24 +1,12 @@
 import type { ScanQrType } from "@/lib/scan/qr-types";
+import { resolvePublicAppOrigin } from "@/lib/public-app-origin";
 
 /**
- * Origin for QR payloads: client uses `window`; SSR should set `NEXT_PUBLIC_APP_URL`.
+ * Origin for QR payloads and tracked scan-out links.
+ * @see resolvePublicAppOrigin
  */
 export function scanTrackingPublicOrigin(): string {
-  if (typeof window !== "undefined" && window.location?.origin) {
-    return window.location.origin;
-  }
-  const env = process.env.NEXT_PUBLIC_APP_URL?.trim().replace(/\/+$/, "");
-  if (env) {
-    try {
-      const u = new URL(env);
-      if (u.protocol === "http:" || u.protocol === "https:") {
-        return `${u.protocol}//${u.host}`;
-      }
-    } catch {
-      /* ignore */
-    }
-  }
-  return "http://localhost:3000";
+  return resolvePublicAppOrigin();
 }
 
 export function buildTrackedScanOutPath(
