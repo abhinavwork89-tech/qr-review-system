@@ -50,7 +50,6 @@ export function ReviewExperienceClient({
   settings: AppSettingsPublic;
 }) {
   const switcher: ReactNode = <ReviewLanguageSwitcher />;
-  console.log(display, "display")
 
   return (
     <ReviewI18nProvider businessDefaultLocale={display.language} slug={slug}>

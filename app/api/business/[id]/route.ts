@@ -26,6 +26,13 @@ import {
   validateMasterQrForPersist,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
+import {
+  masterQrTargetToLegacyType,
+  normalizeMasterQrTarget,
+  validateMasterQrTargetForPersist,
+  type MasterQrTarget,
+} from "@/lib/scan/master-qr-target";
+import { resolvePublicAppOrigin } from "@/lib/public-app-origin";
 import { normalizeAiReviewLanguage } from "@/lib/ai/language";
 import { requireAdminSession } from "@/lib/require-admin-session";
 
@@ -107,7 +114,7 @@ export async function PATCH(request: Request, { params }: Params) {
     const { data: currentRow, error: currentError } = await supabase
       .from("businesses")
       .select(
-        "id,status,is_active,plan_type,name,brand_name,email,logo_url,primary_color,slug,identity_type,identity_number,identity_proof_urls,client_photo_url,channels,whatsapp_country_code,whatsapp_number,google_url,master_qr_type,call_enabled,call_country_code,call_number,ai_enabled,ai_review_language,ai_daily_limit,ai_suggestions_count",
+        "id,status,is_active,plan_type,name,brand_name,email,logo_url,primary_color,slug,identity_type,identity_number,identity_proof_urls,client_photo_url,channels,whatsapp_country_code,whatsapp_number,google_url,master_qr_type,master_qr_target,resource_urls,call_enabled,call_country_code,call_number,ai_enabled,ai_review_language,ai_daily_limit,ai_suggestions_count",
       )
       .eq("id", businessId)
       .maybeSingle();
@@ -306,6 +313,20 @@ export async function PATCH(request: Request, { params }: Params) {
       bodyObj &&
       ("master_qr_type" in bodyObj || "masterQrType" in bodyObj);
 
+    const masterTargetProvided =
+      bodyObj &&
+      ("master_qr_target" in bodyObj || "masterQrTarget" in bodyObj);
+
+    const mergedSlug =
+      typeof (currentRow as { slug?: unknown }).slug === "string"
+        ? String((currentRow as { slug: string }).slug)
+        : "";
+
+    const mergedResources =
+      rawPatch.resource_urls !== undefined
+        ? rawPatch.resource_urls
+        : (currentRow as { resource_urls?: unknown }).resource_urls;
+
     const mergedGoogle =
       typeof rawPatch.google_url === "string"
         ? rawPatch.google_url
@@ -342,7 +363,44 @@ export async function PATCH(request: Request, { params }: Params) {
             : null,
     };
 
-    if (masterProvided) {
+    if (masterTargetProvided) {
+      const rawWant =
+        typeof rawPatch.master_qr_target === "string"
+          ? rawPatch.master_qr_target
+          : typeof bodyObj?.masterQrTarget === "string"
+            ? bodyObj.masterQrTarget
+            : "";
+      const want = normalizeMasterQrTarget(rawWant);
+      if (!want) {
+        return NextResponse.json(
+          {
+            error: "Validation failed",
+            fields: { master_qr_target: "Invalid Master QR target" },
+          },
+          { status: 400 },
+        );
+      }
+      const err = validateMasterQrTargetForPersist(
+        {
+          ...masterBase,
+          slug: mergedSlug,
+          resource_urls: mergedResources,
+        },
+        want,
+        resolvePublicAppOrigin(),
+      );
+      if (err) {
+        return NextResponse.json(
+          { error: "Validation failed", fields: { master_qr_target: err } },
+          { status: 400 },
+        );
+      }
+      rawPatch.master_qr_target = want;
+      const legacy = masterQrTargetToLegacyType(want);
+      if (legacy) {
+        rawPatch.master_qr_type = legacy;
+      }
+    } else if (masterProvided) {
       const rawWant =
         typeof rawPatch.master_qr_type === "string"
           ? rawPatch.master_qr_type
@@ -413,6 +471,9 @@ export async function PATCH(request: Request, { params }: Params) {
         ok: true,
         ...("master_qr_type" in rawPatch
           ? { master_qr_type: (rawPatch.master_qr_type ?? null) as MasterQrType | null }
+          : {}),
+        ...("master_qr_target" in rawPatch
+          ? { master_qr_target: (rawPatch.master_qr_target ?? null) as MasterQrTarget | null }
           : {}),
       },
       { status: 200 },
@@ -744,6 +805,18 @@ function parseBusinessPatchBody(body: unknown): ParseOk | ParseErr {
       } else {
         patch.master_qr_type = t;
       }
+    }
+  }
+
+  if ("master_qr_target" in input || "masterQrTarget" in input) {
+    const raw =
+      "master_qr_target" in input ? input.master_qr_target : input.masterQrTarget;
+    if (typeof raw !== "string") {
+      fields.master_qr_target = "Must be a string";
+    } else if (!normalizeMasterQrTarget(raw.trim())) {
+      fields.master_qr_target = "Invalid Master QR target";
+    } else {
+      patch.master_qr_target = raw.trim();
     }
   }
 

@@ -10,6 +10,7 @@ import {
   normalizeCallCountryCodeStored,
 } from "@/lib/call/call-channel";
 import { normalizeMasterQrType, type MasterQrType } from "@/lib/scan/master-qr";
+import { normalizeMasterQrTarget, type MasterQrTarget } from "@/lib/scan/master-qr-target";
 import { normalizeAiReviewLanguage } from "@/lib/ai/language";
 
 /** Remove disallowed control chars; keeps tab/newline/carriage return for review copy. */
@@ -137,6 +138,7 @@ export type BusinessInsertSanitize = {
   call_country_code: string;
   call_number: string | null;
   master_qr_type: MasterQrType;
+  master_qr_target: MasterQrTarget;
   ai_enabled: boolean;
   ai_review_language: string;
   ai_daily_limit: number;
@@ -190,6 +192,8 @@ export function sanitizeBusinessInsertPayload<T extends BusinessInsertSanitize>(
         : null,
     master_qr_type:
       normalizeMasterQrType(row.master_qr_type) ?? (row.master_qr_type as MasterQrType),
+    master_qr_target:
+      normalizeMasterQrTarget(row.master_qr_target) ?? (row.master_qr_target as MasterQrTarget),
     ai_enabled: row.ai_enabled === true,
     ai_review_language: normalizeAiReviewLanguage(row.ai_review_language),
     ai_daily_limit:
@@ -321,6 +325,15 @@ export function sanitizeBusinessPatchRecord(
       out.master_qr_type = null;
     } else if (typeof v === "string") {
       out.master_qr_type = normalizeMasterQrType(v.trim());
+    }
+  }
+
+  if ("master_qr_target" in out) {
+    const v = out.master_qr_target;
+    if (v === null || v === undefined || v === "") {
+      out.master_qr_target = null;
+    } else if (typeof v === "string") {
+      out.master_qr_target = normalizeMasterQrTarget(v.trim());
     }
   }
 

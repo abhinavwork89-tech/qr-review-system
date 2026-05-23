@@ -21,6 +21,13 @@ import {
   validateMasterQrForPersist,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
+import {
+  masterQrTargetToLegacyType,
+  normalizeMasterQrTarget,
+  validateMasterQrTargetForPersist,
+  type MasterQrTarget,
+} from "@/lib/scan/master-qr-target";
+import { resolvePublicAppOrigin } from "@/lib/public-app-origin";
 import { normalizeAiReviewLanguage } from "@/lib/ai/language";
 import { requireAdminSession } from "@/lib/require-admin-session";
 
@@ -101,6 +108,7 @@ export async function POST(request: Request) {
           call_country_code: row.call_country_code,
           call_number: row.call_number,
           master_qr_type: row.master_qr_type,
+          master_qr_target: row.master_qr_target,
           ai_enabled: row.ai_enabled,
           ai_review_language: row.ai_review_language,
           ai_daily_limit: row.ai_daily_limit,
@@ -187,6 +195,7 @@ type BusinessInsertPayload = {
   call_country_code: string;
   call_number: string | null;
   master_qr_type: MasterQrType;
+  master_qr_target: MasterQrTarget;
   ai_enabled: boolean;
   ai_review_language: string;
   ai_daily_limit: number;
@@ -342,31 +351,6 @@ async function parseBusinessBody(
 
   const callFin = finalizeCallForPersist(callEnabled, callDialForValidate, callNumSource);
 
-  const masterRaw =
-    typeof o.master_qr_type === "string"
-      ? o.master_qr_type
-      : typeof o.masterQrType === "string"
-        ? o.masterQrType
-        : "";
-  const masterTypeResolved =
-    normalizeMasterQrType(masterRaw) ??
-    computeDefaultMasterQrType({
-      google_url: google_url || null,
-      channels: waPack.channels,
-      whatsapp_country_code: waPack.whatsapp_country_code,
-      whatsapp_number: waPack.whatsapp_number,
-    });
-  const masterValErr = validateMasterQrForPersist({
-    master_qr_type: masterTypeResolved,
-    google_url: google_url || null,
-    channels: waPack.channels,
-    whatsapp_country_code: waPack.whatsapp_country_code,
-    whatsapp_number: waPack.whatsapp_number,
-  });
-  if (masterValErr) {
-    fields.master_qr_type = masterValErr;
-  }
-
   const ai_enabled = readBool(o.ai_enabled ?? o.aiEnabled, false);
   const ai_review_language = normalizeAiReviewLanguage(o.ai_review_language ?? o.aiReviewLanguage);
   const aiDailyRaw = o.ai_daily_limit ?? o.aiDailyLimit;
@@ -410,6 +394,43 @@ async function parseBusinessBody(
   if (resource_urls === null) {
     fields.resource_urls = "Must be an array of valid URLs";
   }
+
+  const masterTargetRaw =
+    typeof o.master_qr_target === "string"
+      ? o.master_qr_target
+      : typeof o.masterQrTarget === "string"
+        ? o.masterQrTarget
+        : typeof o.master_qr_type === "string"
+          ? o.master_qr_type
+          : typeof o.masterQrType === "string"
+            ? o.masterQrType
+            : "";
+  const masterTargetResolved: MasterQrTarget =
+    normalizeMasterQrTarget(masterTargetRaw) ?? "review_page";
+  const provisionalSlug = buildSlug(brand_name);
+  const masterTargetErr = validateMasterQrTargetForPersist(
+    {
+      slug: provisionalSlug,
+      google_url: google_url || null,
+      channels: waPack.channels,
+      whatsapp_country_code: waPack.whatsapp_country_code,
+      whatsapp_number: waPack.whatsapp_number,
+      resource_urls: resource_urls ?? [],
+    },
+    masterTargetResolved,
+    resolvePublicAppOrigin(),
+  );
+  if (masterTargetErr) {
+    fields.master_qr_target = masterTargetErr;
+  }
+  const masterTypeResolved =
+    masterQrTargetToLegacyType(masterTargetResolved) ??
+    computeDefaultMasterQrType({
+      google_url: google_url || null,
+      channels: waPack.channels,
+      whatsapp_country_code: waPack.whatsapp_country_code,
+      whatsapp_number: waPack.whatsapp_number,
+    });
 
   const identityTypeRaw =
     typeof o.identity_type === "string"
@@ -509,6 +530,7 @@ async function parseBusinessBody(
           ? null
           : clientPhotoParsed,
       master_qr_type: masterTypeResolved,
+      master_qr_target: masterTargetResolved,
       ai_enabled,
       ai_review_language,
       ai_daily_limit,

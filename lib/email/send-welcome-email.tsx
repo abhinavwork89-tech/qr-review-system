@@ -20,6 +20,8 @@ export type SendWelcomeEmailInput = {
   reviewPageUrl: string;
   qrImages: QrImageAsset[];
   qrAttachments?: WelcomeEmailQrAttachment[];
+  /** Shown in the email body when a QR PNG is attached (no inline CID image). */
+  qrAttachmentHint?: string;
   previewText?: string;
   greeting?: string;
   title?: string;
@@ -67,13 +69,16 @@ export async function sendWelcomeEmail(input: SendWelcomeEmailInput) {
         brandName={brandName}
         footerCopyrightYear={year}
         reviewPageUrl={input.reviewPageUrl}
-        qrImages={input.qrImages}
+        qrImages={[]}
         qrSectionHeading={
-          input.qrImages.length > 0 ? `${brandName} — Master QR` : undefined
+          input.qrAttachments && input.qrAttachments.length > 0
+            ? `${brandName} — Master QR`
+            : undefined
         }
         qrSectionHint={
-          input.qrImages.length > 0
-            ? "Scan this QR to open your review page."
+          input.qrAttachments && input.qrAttachments.length > 0
+            ? (input.qrAttachmentHint?.trim() ||
+              "Your high-quality business QR code is attached to this email and ready for print or download. Open the attachment to print table tents, stickers, or storefront signage.")
             : undefined
         }
         previewText={input.previewText}
