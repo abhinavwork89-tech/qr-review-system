@@ -11,6 +11,12 @@ import {
 } from "@/lib/security/public-rate-limit";
 import { createRouteLogger } from "@/lib/logging/app-logger";
 import { rejectOversizedBody } from "@/lib/security/request-body-limit";
+import {
+  REWARD_CLAIM_BURST_MAX,
+  REWARD_CLAIM_BURST_WINDOW_MS,
+  REWARD_CLAIM_IP_MAX,
+  REWARD_CLAIM_IP_WINDOW_MS,
+} from "@/lib/reward/reward-claim-rate-limits";
 
 export const runtime = "nodejs";
 
@@ -42,7 +48,11 @@ export async function POST(request: Request) {
     if (tooLarge) return tooLarge;
 
     const limited = enforcePublicRateLimits(request.headers, [
-      { prefix: "reward:ip", max: 40, windowMs: 10 * 60_000 },
+      {
+        prefix: "reward:ip",
+        max: REWARD_CLAIM_IP_MAX,
+        windowMs: REWARD_CLAIM_IP_WINDOW_MS,
+      },
     ]);
     if (limited) return limited;
 
@@ -61,7 +71,11 @@ export async function POST(request: Request) {
     const { business_id, kind } = parsed.data;
 
     const ip = getClientIp(request.headers);
-    const burst = consumePublicRateLimit(`reward:burst:${ip}:${business_id}:${kind}`, 2, 60_000);
+    const burst = consumePublicRateLimit(
+      `reward:burst:${ip}:${business_id}:${kind}`,
+      REWARD_CLAIM_BURST_MAX,
+      REWARD_CLAIM_BURST_WINDOW_MS,
+    );
     if (!burst.allowed) {
       return rateLimitExceededResponse(burst.retryAfterSec);
     }

@@ -26,7 +26,7 @@ function formatPlanLabel(plan: string): string {
   return s.replace(/[_-]+/g, " ").replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-export function scheduleWelcomeEmailAfterCreate(input: {
+export type WelcomeEmailAfterCreateInput = {
   businessId: string;
   slug: string;
   name: string;
@@ -39,63 +39,134 @@ export function scheduleWelcomeEmailAfterCreate(input: {
   whatsapp_country_code: string | null;
   whatsapp_number: string | null;
   master_qr_type: string | null;
-}): void {
-  void (async () => {
-    try {
-      emailFlowInfo("lifecycle_trigger_scheduled", {
-        eventTrigger: "welcome",
-        correlationId: input.businessId,
-        slug: input.slug,
-      });
-      const brandLabel =
-        input.brandName.trim() || input.name.trim() || "Your business";
-      const { qrImages, qrAttachments, debug } = await buildWelcomeEmailMasterQrContext({
-        businessId: input.businessId,
-        brandName: brandLabel,
-        logoUrl: input.logoUrl,
-      });
-      emailFlowInfo("welcome_email_qr_resolved", {
-        eventTrigger: "welcome",
-        correlationId: input.businessId,
-        finalQrImageUrl: debug.finalQrImageUrl,
-        finalQrPayload: debug.masterQrPayload,
-        emailTemplatePayload: {
-          qrImageCount: qrImages.length,
-          reviewPageUrl: buildReviewPageUrl(input.slug),
-        },
-      });
-      const sendResult = await sendWelcomeEmail({
-        businessId: input.businessId,
-        dedupeKey: `welcome:${input.businessId}`,
-        ownerFullName: input.name.trim() || "there",
-        brandName: brandLabel,
-        businessEmail: input.email.trim() || null,
-        clientLogoUrl: input.logoUrl,
-        primaryColor: input.primaryColor,
+};
+
+export type WelcomeEmailPipelineResult = {
+  sent: boolean;
+  resendMessageId: string | null;
+  skippedReason: string | null;
+};
+
+/**
+ * Runs the full welcome email pipeline (QR + Resend). Must be awaited in route handlers
+ * so serverless does not exit before `resend.emails.send`.
+ */
+export async function executeWelcomeEmailAfterCreate(
+  input: WelcomeEmailAfterCreateInput,
+): Promise<WelcomeEmailPipelineResult> {
+  emailFlowInfo("welcome_email_pipeline_start", {
+    eventTrigger: "welcome",
+    correlationId: input.businessId,
+    slug: input.slug,
+    hasBusinessEmail: Boolean(input.email?.trim()),
+  });
+
+  try {
+    const brandLabel =
+      input.brandName.trim() || input.name.trim() || "Your business";
+
+    emailFlowInfo("welcome_email_business_created", {
+      eventTrigger: "welcome",
+      correlationId: input.businessId,
+      slug: input.slug,
+      brandName: brandLabel,
+    });
+
+    const { qrImages, qrAttachments, debug } = await buildWelcomeEmailMasterQrContext({
+      businessId: input.businessId,
+      brandName: brandLabel,
+      logoUrl: input.logoUrl,
+    });
+
+    emailFlowInfo("welcome_email_qr_resolved", {
+      eventTrigger: "welcome",
+      correlationId: input.businessId,
+      qrTier: debug.tier,
+      finalQrImageUrl: debug.finalQrImageUrl,
+      finalQrPayload: debug.masterQrPayload,
+      attachmentCount: qrAttachments.length,
+      emailTemplatePayload: {
+        qrImageCount: qrImages.length,
         reviewPageUrl: buildReviewPageUrl(input.slug),
-        qrImages,
-        qrAttachments,
-      });
-      emailFlowInfo("lifecycle_trigger_finished", {
-        eventTrigger: "welcome",
-        correlationId: input.businessId,
-        resendMessageId:
-          sendResult && typeof sendResult === "object" && "id" in sendResult
-            ? String((sendResult as { id: unknown }).id)
-            : null,
-        outbound:
-          sendResult === null
-            ? "skipped_duplicate_or_no_recipient"
-            : "resend_accepted",
-      });
-    } catch (err) {
-      emailFlowErrorWithCause(
-        "lifecycle_trigger_failed",
-        { eventTrigger: "welcome", correlationId: input.businessId },
-        err,
-      );
-    }
-  })();
+      },
+    });
+
+    emailFlowInfo("welcome_resend_send_start", {
+      eventTrigger: "welcome",
+      correlationId: input.businessId,
+      attachmentCount: qrAttachments.length,
+      qrTier: debug.tier,
+    });
+
+    const sendResult = await sendWelcomeEmail({
+      businessId: input.businessId,
+      dedupeKey: `welcome:${input.businessId}`,
+      ownerFullName: input.name.trim() || "there",
+      brandName: brandLabel,
+      businessEmail: input.email.trim() || null,
+      clientLogoUrl: input.logoUrl,
+      primaryColor: input.primaryColor,
+      reviewPageUrl: buildReviewPageUrl(input.slug),
+      qrImages,
+      qrAttachments,
+      qrAttachmentHint:
+        debug.tier === "none"
+          ? "Your Master QR is available in your One Core App dashboard. You can download and print it anytime."
+          : undefined,
+    });
+
+    const resendMessageId =
+      sendResult && typeof sendResult === "object" && "id" in sendResult
+        ? String((sendResult as { id: unknown }).id)
+        : null;
+
+    const skippedReason =
+      sendResult === null ? "skipped_duplicate_or_no_recipient" : null;
+
+    emailFlowInfo("welcome_resend_send_finished", {
+      eventTrigger: "welcome",
+      correlationId: input.businessId,
+      resendMessageId,
+      outbound: skippedReason ?? "resend_accepted",
+      qrTier: debug.tier,
+    });
+
+    emailFlowInfo("lifecycle_trigger_finished", {
+      eventTrigger: "welcome",
+      correlationId: input.businessId,
+      resendMessageId,
+      outbound: skippedReason ?? "resend_accepted",
+    });
+
+    return {
+      sent: sendResult !== null,
+      resendMessageId,
+      skippedReason,
+    };
+  } catch (err) {
+    emailFlowErrorWithCause(
+      "welcome_email_pipeline_failed",
+      { eventTrigger: "welcome", correlationId: input.businessId },
+      err,
+    );
+    emailFlowErrorWithCause(
+      "lifecycle_trigger_failed",
+      { eventTrigger: "welcome", correlationId: input.businessId },
+      err,
+    );
+    return { sent: false, resendMessageId: null, skippedReason: "pipeline_error" };
+  }
+}
+
+/** @deprecated Prefer `executeWelcomeEmailAfterCreate` awaited from the route handler. */
+export function scheduleWelcomeEmailAfterCreate(input: WelcomeEmailAfterCreateInput): void {
+  emailFlowInfo("lifecycle_trigger_scheduled", {
+    eventTrigger: "welcome",
+    correlationId: input.businessId,
+    slug: input.slug,
+    mode: "detached_promise",
+  });
+  void executeWelcomeEmailAfterCreate(input);
 }
 
 type BusinessRowFields = {
@@ -244,7 +315,6 @@ export function schedulePatchLifecycleEmails(input: {
           correlationId: input.businessId,
           dedupeKey: `business_status:${input.businessId}:${oldStatus}->${newStatus}`,
           status: newStatus,
-          dashboardUrl,
         });
         emailFlowInfo("lifecycle_trigger_finished", {
           eventTrigger: "business_status",

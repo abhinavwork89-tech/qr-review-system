@@ -127,16 +127,7 @@ export function getEnabledPublicChannels(
 export function getPreferredPublicUrl(input: {
   googleReviewUrl: string;
   channels: BusinessChannels | null;
-  /** When true, only the Google review URL is used for redirects (never social channels). */
-  directRedirect?: boolean;
 }): { url: string | null; sourceLabel: string } {
-  if (input.directRedirect === true) {
-    if (isSafeHttpUrl(input.googleReviewUrl)) {
-      return { url: input.googleReviewUrl.trim(), sourceLabel: "Google" };
-    }
-    return { url: null, sourceLabel: "Google" };
-  }
-
   const prioritized = getPrioritizedChannels(input.channels);
   if (prioritized.length > 0) {
     return {

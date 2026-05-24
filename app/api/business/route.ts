@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceRoleClient } from "@/lib/supabase/server";
 import { isBusinessActiveStatus, normalizeBusinessStatus } from "@/lib/business/status";
-import { scheduleWelcomeEmailAfterCreate } from "@/lib/email/lifecycle-triggers";
+import { executeWelcomeEmailAfterCreate } from "@/lib/email/lifecycle-triggers";
 import {
   finalizeIdentityForDb,
   getIdentityFieldErrors,
@@ -118,7 +118,7 @@ export async function POST(request: Request) {
         .single();
 
       if (!error && data) {
-        scheduleWelcomeEmailAfterCreate({
+        await executeWelcomeEmailAfterCreate({
           businessId: data.id,
           slug,
           name: row.name,
@@ -279,18 +279,7 @@ async function parseBusinessBody(
     allow_low_rating_redirect = false;
   }
 
-  const direct = o.direct_redirect;
-  let direct_redirect: boolean;
-  if (typeof direct === "boolean") {
-    direct_redirect = direct;
-  } else if (direct === "true" || direct === "false") {
-    direct_redirect = direct === "true";
-  } else if (direct === undefined) {
-    direct_redirect = true;
-  } else {
-    fields.direct_redirect = "Must be a boolean";
-    direct_redirect = true;
-  }
+  const direct_redirect = false;
 
   const channels = readObjectOrNull(o.channels);
   if (o.channels !== undefined && channels === null) {

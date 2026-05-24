@@ -5,12 +5,11 @@ import { getPreferredPublicUrl, isSafeHttpUrl } from "@/lib/review/business-conf
 import type { BusinessChannels } from "@/lib/types/business";
 import { useReviewT } from "@/components/review/review-i18n-provider";
 import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
+import { delayedReviewModalKey } from "@/lib/review/review-reward-storage-keys";
 
 type Props = {
   googleReviewUrl: string;
   channels: BusinessChannels | null;
-  /** When true, social-channel prompts are suppressed (Google-only redirect mode). */
-  directRedirect?: boolean;
   /** Scope “show once” per business page. */
   pageSlug?: string;
   delayMs?: number;
@@ -20,7 +19,6 @@ type Props = {
 export function ReviewDelayedModal({
   googleReviewUrl,
   channels,
-  directRedirect = false,
   pageSlug = "",
   delayMs = 10_000,
   targetId = "review-flow",
@@ -28,20 +26,18 @@ export function ReviewDelayedModal({
   const t = useReviewT();
   const [open, setOpen] = useState(false);
   const shownOnceRef = useRef(false);
-  const sessionKey = useMemo(() => {
-    const slugPart = pageSlug.trim().toLowerCase() || "page";
-    const g = googleReviewUrl.trim().toLowerCase() || "no-google";
-    return `delayed-review-once:${slugPart}:${g}`;
-  }, [googleReviewUrl, pageSlug]);
+  const sessionKey = useMemo(
+    () => delayedReviewModalKey(pageSlug, googleReviewUrl),
+    [googleReviewUrl, pageSlug],
+  );
 
   useBodyScrollLock(open);
 
   const shouldTrigger = useMemo(() => {
-    if (directRedirect) return false;
     if (!isSafeHttpUrl(googleReviewUrl)) return false;
     const preferred = getPreferredPublicUrl({ googleReviewUrl, channels });
     return preferred.sourceLabel !== "Google";
-  }, [channels, directRedirect, googleReviewUrl]);
+  }, [channels, googleReviewUrl]);
 
   useEffect(() => {
     if (!shouldTrigger || shownOnceRef.current) return;

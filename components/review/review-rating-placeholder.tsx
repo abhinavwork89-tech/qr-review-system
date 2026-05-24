@@ -16,12 +16,10 @@ import {
   type ReviewReturnPhase,
 } from "@/components/review/review-google-return-panel";
 import {
-  getPreferredPublicUrl,
   isSafeHttpUrl,
   resolveGoogleReviewSubmitRedirect,
 } from "@/lib/review/business-config";
 import { buildTrackedScanOutUrl } from "@/lib/scan/build-tracked-out-url";
-import { reviewSourceLabelToScanType } from "@/lib/scan/qr-types";
 import {
   COUNTRY_DIAL_CODES,
   DEFAULT_DIAL_CODE,
@@ -46,6 +44,7 @@ import {
   mapMobileValidationToReviewKey,
 } from "@/lib/i18n/review-messages";
 import { playReviewSubmitSuccessConfetti } from "@/lib/review/review-confetti";
+import { clearReviewSessionClientState } from "@/lib/review/review-session-cleanup";
 import {
   clampReviewMobileNationalInput,
   optionalEmailValidationMessageKey,
@@ -55,6 +54,7 @@ import {
 import { useAiReviewSuggestions } from "@/components/review/use-ai-review-suggestions";
 import { ReviewAiSuggestionSkeleton } from "@/components/review/review-ai-suggestion-skeleton";
 import type { AiReviewLanguage } from "@/lib/ai/constants";
+import { buildFallbackReviewSuggestions } from "@/lib/ai/review-gen-fallback";
 import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
 
 const suggestionBtnClass = (selected: boolean) =>
@@ -68,8 +68,6 @@ export type ReviewRatingPlaceholderProps = {
   businessId: string;
   googleReviewUrl: string;
   threshold: number;
-  directRedirect: boolean;
-  skipPreferredAutoRedirect?: boolean;
   allowLowRatingRedirect: boolean;
   channels: BusinessChannels | null;
   onRatingChange?: (rating: number) => void;
@@ -79,6 +77,10 @@ export type ReviewRatingPlaceholderProps = {
   aiGenerateLanguage?: AiReviewLanguage;
   /** Expected AI suggestion count from plan (1 / 3 / 5). */
   aiSuggestionCount?: number;
+  /** Brand name for AI-language template fallback (not UI locale). */
+  brandName?: string;
+  /** Review submitted without Google redirect — parent may schedule session exit. */
+  onReviewSessionComplete?: () => void;
 };
 
 type FlowView = "form" | "return" | "thanks_internal";
@@ -89,14 +91,14 @@ export function ReviewRatingPlaceholder({
   businessId,
   googleReviewUrl,
   threshold,
-  directRedirect,
-  skipPreferredAutoRedirect = false,
   allowLowRatingRedirect,
   channels,
   onRatingChange,
   aiReviewGenerationEnabled = false,
   aiGenerateLanguage = "en",
   aiSuggestionCount = 3,
+  brandName = "Business",
+  onReviewSessionComplete,
 }: ReviewRatingPlaceholderProps) {
   const { locale, t } = useReviewI18n();
   const id = useId();
@@ -121,8 +123,6 @@ export function ReviewRatingPlaceholder({
     mobile: false,
   });
   const [submitAttempted, setSubmitAttempted] = useState(false);
-  const [copyToastVisible, setCopyToastVisible] = useState(false);
-  const copyToastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [googleRedirectHold, setGoogleRedirectHold] = useState<{
     url: string;
     redirectAt: number;
@@ -137,6 +137,22 @@ export function ReviewRatingPlaceholder({
     [locale, rating],
   );
 
+  const aiLanguageFallback = useMemo(() => {
+    if (!aiReviewGenerationEnabled || rating <= 0) return [];
+    return buildFallbackReviewSuggestions({
+      rating,
+      language: aiGenerateLanguage,
+      count: aiSuggestionCount,
+      brandName,
+    });
+  }, [
+    aiReviewGenerationEnabled,
+    rating,
+    aiGenerateLanguage,
+    aiSuggestionCount,
+    brandName,
+  ]);
+
   const aiSuggest = useAiReviewSuggestions({
     enabled: aiReviewGenerationEnabled,
     businessId,
@@ -150,13 +166,14 @@ export function ReviewRatingPlaceholder({
     if (aiSuggest.phase === "success" && aiSuggest.suggestions.length > 0) {
       return aiSuggest.suggestions;
     }
-    if (aiSuggest.useStaticFallback) return staticSuggestions;
+    if (aiSuggest.useStaticFallback) return aiLanguageFallback;
     return [];
   }, [
     aiReviewGenerationEnabled,
     aiSuggest.phase,
     aiSuggest.suggestions,
     aiSuggest.useStaticFallback,
+    aiLanguageFallback,
     staticSuggestions,
   ]);
 
@@ -196,13 +213,34 @@ export function ReviewRatingPlaceholder({
   const aiNotice = useMemo(() => {
     if (!aiReviewGenerationEnabled) return null;
     if (aiSuggest.phase !== "error") return null;
+    const hasAiLanguageFallback =
+      aiSuggest.useStaticFallback && aiLanguageFallback.length > 0;
+    if (hasAiLanguageFallback) {
+      if (aiSuggest.errorCode === "rate_limited") return t("rating.aiRateLimited");
+      if (
+        aiSuggest.errorCode === "ai_unavailable" ||
+        aiSuggest.errorCode === "invalid_business"
+      ) {
+        return t("rating.aiUnavailable");
+      }
+      return t("rating.aiEmptyFallback");
+    }
     if (aiSuggest.errorCode === "rate_limited") return t("rating.aiRateLimited");
     if (aiSuggest.errorCode === "ai_unavailable" || aiSuggest.errorCode === "invalid_business") {
       return t("rating.aiUnavailable");
     }
-    if (aiSuggest.errorCode === "empty") return t("rating.aiEmptyFallback");
+    if (aiSuggest.errorCode === "empty" || aiSuggest.errorCode === "count_mismatch") {
+      return t("rating.aiEmptyFallback");
+    }
     return t("rating.aiLoadFailed");
-  }, [aiReviewGenerationEnabled, aiSuggest.errorCode, aiSuggest.phase, t]);
+  }, [
+    aiReviewGenerationEnabled,
+    aiSuggest.errorCode,
+    aiSuggest.phase,
+    aiSuggest.useStaticFallback,
+    aiLanguageFallback.length,
+    t,
+  ]);
 
   const aiLoadingBlock =
     aiReviewGenerationEnabled &&
@@ -253,6 +291,7 @@ export function ReviewRatingPlaceholder({
       if (Date.now() >= hold.redirectAt) {
         redirectNavStartedRef.current = true;
         try {
+          clearReviewSessionClientState(businessId);
           window.location.href = hold.url;
         } catch {
           redirectNavStartedRef.current = false;
@@ -262,7 +301,7 @@ export function ReviewRatingPlaceholder({
     tick();
     const id = window.setInterval(tick, 250);
     return () => window.clearInterval(id);
-  }, [googleRedirectHold]);
+  }, [googleRedirectHold, businessId]);
   const trimmedReview = reviewText.trim();
   const mobileLocalDigits = useMemo(
     () => sanitizePhoneLocalInput(mobileNumber),
@@ -334,15 +373,6 @@ export function ReviewRatingPlaceholder({
   );
 
   const hasRating = rating > 0;
-  const preferredPublic = useMemo(
-    () => getPreferredPublicUrl({ googleReviewUrl, channels, directRedirect }),
-    [channels, directRedirect, googleReviewUrl],
-  );
-
-  const outboundScanType = useMemo(
-    () => reviewSourceLabelToScanType(preferredPublic.sourceLabel),
-    [preferredPublic.sourceLabel],
-  );
 
   /** Post–review-submit outbound: always `google_url` + scan type `google` (not social “preferred”). */
   const trackedGoogleReviewUrl = useMemo(() => {
@@ -355,52 +385,10 @@ export function ReviewRatingPlaceholder({
     typeof process !== "undefined" &&
     process.env.NEXT_PUBLIC_REVIEW_REDIRECT_DEBUG === "1";
 
-  const hasAutoRedirected = useRef(false);
-
   useEffect(() => {
-    const dest = preferredPublic.url?.trim() ?? "";
-    if (
-      !directRedirect ||
-      skipPreferredAutoRedirect ||
-      hasAutoRedirected.current ||
-      !dest ||
-      !isSafeHttpUrl(dest) ||
-      !businessId
-    )
-      return;
-    hasAutoRedirected.current = true;
-    window.location.replace(
-      buildTrackedScanOutUrl(businessId, outboundScanType, dest),
-    );
-  }, [
-    businessId,
-    directRedirect,
-    outboundScanType,
-    preferredPublic.url,
-    skipPreferredAutoRedirect,
-  ]);
-
-  useEffect(
-    () => () => {
-      if (copyToastTimerRef.current) {
-        clearTimeout(copyToastTimerRef.current);
-      }
-    },
-    [],
-  );
-
-  const showCopySuccessToast = useCallback(() => {
-    setClipboardWarning(false);
-    if (copyToastTimerRef.current) {
-      clearTimeout(copyToastTimerRef.current);
-      copyToastTimerRef.current = null;
-    }
-    setCopyToastVisible(true);
-    copyToastTimerRef.current = setTimeout(() => {
-      setCopyToastVisible(false);
-      copyToastTimerRef.current = null;
-    }, 4500);
-  }, []);
+    if (flow !== "thanks_internal") return;
+    onReviewSessionComplete?.();
+  }, [flow, onReviewSessionComplete]);
 
   const selectOption = useCallback(
     (index: number, text: string) => {
@@ -529,14 +517,16 @@ export function ReviewRatingPlaceholder({
             isSafeHttpUrl((googleUrl as string).trim()),
         );
 
-        void navigator.clipboard.writeText(safeReview).then(() => {
-          if (!willRedirect) showCopySuccessToast();
-        }).catch(() => {
-          setClipboardWarning(true);
-          console.warn(
-            "Clipboard unavailable; review text was not copied automatically.",
-          );
-        });
+        if (willRedirect) {
+          void navigator.clipboard.writeText(safeReview).catch(() => {
+            setClipboardWarning(true);
+            console.warn(
+              "Clipboard unavailable; review text was not copied automatically.",
+            );
+          });
+        } else {
+          setClipboardWarning(false);
+        }
 
         if (!willRedirect) {
           if (reviewRedirectDebug) {
@@ -575,7 +565,6 @@ export function ReviewRatingPlaceholder({
             rating,
             threshold,
             allow_low_rating_redirect: allowLowRatingRedirect,
-            direct_redirect_business_flag: directRedirect,
             finalUrl: trackedGoogle,
             currentRoute:
               typeof window !== "undefined" ? window.location.href : "",
@@ -612,7 +601,6 @@ export function ReviewRatingPlaceholder({
   }, [
     allowLowRatingRedirect,
     businessId,
-    directRedirect,
     email,
     flow,
     googleReviewUrl,
@@ -625,7 +613,6 @@ export function ReviewRatingPlaceholder({
     reviewText,
     submitted,
     reviewRedirectDebug,
-    showCopySuccessToast,
     t,
     threshold,
   ]);
@@ -651,25 +638,6 @@ export function ReviewRatingPlaceholder({
   const ratingStarsLabel =
     rating > 0 ? (rating === 1 ? t("rating.starOne") : t("rating.starsMany", { n: rating })) : t("rating.dash");
 
-  const copySuccessToast =
-    copyToastVisible ? (
-      <div
-        role="status"
-        aria-live="polite"
-        aria-atomic="true"
-        className="pointer-events-none fixed inset-x-0 bottom-0 z-[60] flex justify-center px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-2"
-      >
-        <div className="max-w-md rounded-xl border border-[color-mix(in_srgb,var(--review-fg)_14%,transparent)] bg-[color-mix(in_srgb,var(--review-bg)_96%,var(--review-fg))] px-4 py-3 text-center shadow-lg">
-          <p className="text-sm font-semibold text-[var(--review-fg)]">
-            {t("rating.copyToastTitle")}
-          </p>
-          <p className="mt-1 text-xs leading-relaxed text-[var(--review-muted)]">
-            {t("rating.copyToastBody")}
-          </p>
-        </div>
-      </div>
-    ) : null;
-
   if (flow === "thanks_internal") {
     return (
       <section
@@ -682,8 +650,7 @@ export function ReviewRatingPlaceholder({
           </p>
           <p className="mt-2 text-sm text-[var(--review-muted)]">{t("rating.thanksBody")}</p>
         </div>
-        {copySuccessToast}
-      </section>
+              </section>
     );
   }
 
@@ -702,8 +669,7 @@ export function ReviewRatingPlaceholder({
               {t("rating.thanksNoLinkBody")}
             </p>
           </div>
-          {copySuccessToast}
-        </section>
+                  </section>
       );
     }
 
@@ -738,8 +704,7 @@ export function ReviewRatingPlaceholder({
             {t("rating.clipboardWarning")}
           </p>
         ) : null}
-        {copySuccessToast}
-      </section>
+              </section>
     );
   }
 
@@ -1102,7 +1067,6 @@ export function ReviewRatingPlaceholder({
         </div>
       ) : null}
 
-      {copySuccessToast}
-    </section>
+          </section>
   );
 }

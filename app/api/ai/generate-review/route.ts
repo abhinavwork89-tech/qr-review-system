@@ -23,6 +23,7 @@ import { isValidBusinessUuid } from "@/lib/ai/validate-business-id";
 import { getReviewGenCache, reviewGenCacheKey, setReviewGenCache } from "@/lib/ai/review-gen-cache";
 import { buildFallbackReviewSuggestions } from "@/lib/ai/review-gen-fallback";
 import { generateReviewSuggestionsOpenAI } from "@/lib/ai/review-gen-openai";
+import { ensureReviewSuggestionCount } from "@/lib/ai/review-suggestions-normalize";
 import { getOpenAIApiKey } from "@/lib/ai/openai-provider";
 import { enforcePublicRateLimits } from "@/lib/security/enforce-public-rate-limit";
 import { consumePublicRateLimit, getClientIp } from "@/lib/security/public-rate-limit";
@@ -35,8 +36,12 @@ function jsonErr(status: number, code: string, message: string) {
   return NextResponse.json({ error: code, message }, { status });
 }
 
-function isAiLanguage(v: string): v is AiReviewLanguage {
-  return (AI_REVIEW_LANGUAGES as readonly string[]).includes(v);
+function finalizeSuggestions(
+  partial: string[],
+  fallback: string[],
+  expected: number,
+): string[] {
+  return ensureReviewSuggestionCount(partial, expected, fallback);
 }
 
 type InsertRow = {
@@ -127,7 +132,7 @@ export async function POST(request: Request) {
         ? o.business_id.trim()
         : "";
   const ratingRaw = o.rating;
-  const languageRaw =
+  const clientLanguageRaw =
     typeof o.language === "string" ? o.language.trim().toLowerCase() : "";
 
   if (!isValidBusinessUuid(businessIdRaw)) {
@@ -145,11 +150,6 @@ export async function POST(request: Request) {
   if (rating < 1 || rating > 5) {
     return jsonErr(400, "invalid_rating", "Rating must be an integer from 1 to 5");
   }
-
-  if (!languageRaw || !isAiLanguage(languageRaw)) {
-    return jsonErr(400, "invalid_language", "Unsupported language");
-  }
-  const language: AiReviewLanguage = languageRaw;
 
   const burst = consumePublicRateLimit(
     `ai:burst:${ip}:${businessIdRaw}`,
@@ -196,6 +196,19 @@ export async function POST(request: Request) {
       : "business";
 
   const businessAi = getBusinessAISettings(row);
+  const language: AiReviewLanguage = businessAi.ai_review_language;
+  if (
+    clientLanguageRaw &&
+    clientLanguageRaw !== language &&
+    (AI_REVIEW_LANGUAGES as readonly string[]).includes(clientLanguageRaw)
+  ) {
+    log.info("ai_language_client_ignored", {
+      businessId: businessIdRaw,
+      clientLanguage: clientLanguageRaw,
+      businessLanguage: language,
+    });
+  }
+
   const gate = canUseAIReview({
     global,
     business: businessAi,
@@ -220,6 +233,13 @@ export async function POST(request: Request) {
   }
 
   const suggestionsCount = effectiveBusinessSuggestionsCount(row);
+  const fallback = buildFallbackReviewSuggestions({
+    rating,
+    language,
+    count: suggestionsCount,
+    brandName,
+  });
+
   const dayStart = startOfUtcDay(new Date()).toISOString();
 
   const globalUsed = await countCompletedAiGenerationsSince(supabase, dayStart, null);
@@ -317,7 +337,16 @@ export async function POST(request: Request) {
     suggestionsCount,
   });
   const cached = getReviewGenCache(cacheKey);
-  if (cached && cached.length === suggestionsCount) {
+  if (cached && cached.length > 0) {
+    const normalizedCached = finalizeSuggestions(cached, fallback, suggestionsCount);
+    if (cached.length !== suggestionsCount) {
+      log.warn("ai_cache_count_normalized", {
+        businessId: businessIdRaw,
+        was: cached.length,
+        expected: suggestionsCount,
+      });
+    }
+    setReviewGenCache(cacheKey, normalizedCached);
     aiDebug("cache_hit", { cacheKey, ms: Date.now() - started });
     const est = 0;
     const genId = await insertGeneration(supabase, {
@@ -333,7 +362,7 @@ export async function POST(request: Request) {
       from_cache: true,
     });
     return NextResponse.json({
-      suggestions: cached,
+      suggestions: normalizedCached,
       estimatedCost: est,
       generationId: genId ?? "",
       cached: true,
@@ -341,13 +370,6 @@ export async function POST(request: Request) {
     });
   }
   aiDebug("cache_miss", { cacheKey });
-
-  const fallback = buildFallbackReviewSuggestions({
-    rating,
-    language,
-    count: suggestionsCount,
-    brandName,
-  });
 
   const hasKey = Boolean(getOpenAIApiKey());
   if (!hasKey) {
@@ -366,7 +388,7 @@ export async function POST(request: Request) {
       from_cache: false,
     });
     return NextResponse.json({
-      suggestions: fallback,
+      suggestions: finalizeSuggestions(fallback, fallback, suggestionsCount),
       estimatedCost: est,
       generationId: genId ?? "",
       cached: false,
@@ -383,12 +405,20 @@ export async function POST(request: Request) {
     timeoutMs: 45_000,
   });
 
-  let suggestions: string[] = fallback;
+  let suggestions: string[] = finalizeSuggestions(fallback, fallback, suggestionsCount);
   let modelUsed = "fallback-templates";
   let est = 0;
 
   if ("suggestions" in aiRes) {
-    suggestions = aiRes.suggestions;
+    const normalized = finalizeSuggestions(aiRes.suggestions, fallback, suggestionsCount);
+    if (normalized.length !== aiRes.suggestions.length) {
+      log.info("ai_openai_count_normalized", {
+        businessId: businessIdRaw,
+        raw: aiRes.suggestions.length,
+        expected: suggestionsCount,
+      });
+    }
+    suggestions = normalized;
     modelUsed = AI_ALLOWED_MODEL;
     est =
       estimateAICostUSD({
@@ -399,8 +429,14 @@ export async function POST(request: Request) {
     setReviewGenCache(cacheKey, suggestions);
     aiDebug("openai_ok", { ms: Date.now() - started, est, tokensIn: aiRes.inputTokens, tokensOut: aiRes.outputTokens });
   } else {
-    log.warn("openai_fail", { ms: Date.now() - started, reason: aiRes.error });
-    suggestions = fallback;
+    log.warn("openai_fail", {
+      businessId: businessIdRaw,
+      ms: Date.now() - started,
+      reason: aiRes.error,
+      language,
+      suggestionsCount,
+    });
+    suggestions = finalizeSuggestions(fallback, fallback, suggestionsCount);
     modelUsed = "fallback-templates";
     est = 0;
     const genId = await insertGeneration(supabase, {

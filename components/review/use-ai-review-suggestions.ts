@@ -30,12 +30,11 @@ function isAbortError(e: unknown): boolean {
 /** Jitter-free debounce for stable React Compiler / lint compliance. */
 const AI_SUGGEST_DEBOUNCE_MS = 1000;
 
-function capSuggestionList(list: string[], expected: number | undefined): string[] {
+function expectedSuggestionLimit(expected: number | undefined): number | null {
   if (typeof expected !== "number" || !Number.isFinite(expected) || expected <= 0) {
-    return list;
+    return null;
   }
-  const lim = Math.min(5, Math.max(1, Math.floor(expected)));
-  return list.slice(0, lim);
+  return Math.min(5, Math.max(1, Math.floor(expected)));
 }
 
 export function useAiReviewSuggestions(input: {
@@ -185,18 +184,36 @@ export function useAiReviewSuggestions(input: {
           const rawList = Array.isArray(body.suggestions)
             ? (body.suggestions as unknown[]).filter((x): x is string => typeof x === "string")
             : [];
-          const list = capSuggestionList(rawList, input.expectedSuggestionCount);
+          const expectedCount = expectedSuggestionLimit(input.expectedSuggestionCount);
+          const list =
+            expectedCount !== null ? rawList.slice(0, expectedCount) : rawList;
 
           setWasCached(body.cached === true);
-          setSuggestions(list);
+
           if (list.length === 0) {
             setPhase("error");
             setErrorCode("empty");
-          } else {
-            setPhase("success");
-            setErrorCode(null);
-            aiReviewDebug("fetch:success", { myGen, count: list.length, wasCached: body.cached === true });
+            setSuggestions([]);
+            aiReviewDebug("fetch:empty", { myGen });
+            return;
           }
+
+          if (expectedCount !== null && list.length !== expectedCount) {
+            aiReviewDebug("fetch:count_mismatch", {
+              myGen,
+              expected: expectedCount,
+              got: list.length,
+            });
+            setPhase("error");
+            setErrorCode("count_mismatch");
+            setSuggestions([]);
+            return;
+          }
+
+          setSuggestions(list);
+          setPhase("success");
+          setErrorCode(null);
+          aiReviewDebug("fetch:success", { myGen, count: list.length, wasCached: body.cached === true });
         } catch (e) {
           if (ac.signal.aborted || isAbortError(e)) {
             aiReviewDebug("fetch:aborted", { myGen, name: e instanceof Error ? e.name : "unknown" });

@@ -138,7 +138,6 @@ export default async function BusinessDetailPage({ params, searchParams }: PageP
         secondaryColor: asString(row.secondary_color) || "#64748b",
         googleUrl: asString(row.google_url),
         threshold: String(row.threshold ?? "4"),
-        directRedirect: asBoolean(row.direct_redirect),
         allowLowRatingRedirect: asBoolean(row.allow_low_rating_redirect),
         spinEnabled: asBoolean(channels.spin_enabled),
         scratchEnabled: asBoolean(channels.scratch_enabled),
