@@ -1,6 +1,8 @@
-import { Text } from "@react-email/components";
+import { Link, Text } from "@react-email/components";
 import { MasterEmailLayout } from "@/emails/MasterEmailLayout";
 import type { EmailBrandContext, QrImageAsset } from "@/emails/types";
+
+const SUPPORT_EMAIL = "team@onecoreapp.com";
 
 export type WelcomeEmailProps = EmailBrandContext & {
   previewText?: string;
@@ -28,13 +30,13 @@ export function WelcomeEmail({
 }: WelcomeEmailProps) {
   const displayBrand = brand.brandName.trim() || "your business";
   const owner = brand.ownerFullName.trim() || "there";
-  const defaultGreeting = `Welcome aboard, ${owner} — ${displayBrand} is live on One Core App.`;
-  const defaultTitle = `You are ready to collect reviews`;
+  const defaultGreeting = `Hi ${owner}, welcome to One Core App — we're excited to have ${displayBrand} on board.`;
+  const defaultTitle = "You're all set!";
 
   return (
     <MasterEmailLayout
       {...brand}
-      previewText={previewText ?? `Welcome to ${displayBrand}`}
+      previewText={previewText ?? `Welcome to One Core App, ${displayBrand}!`}
       title={title ?? defaultTitle}
       greeting={greeting ?? defaultGreeting}
       mainMessage={
@@ -47,7 +49,7 @@ export function WelcomeEmail({
               color: "#18181b",
             }}
           >
-            {`We are thrilled to have ${displayBrand} on board. Your review experience is configured — use the attached Master QR for print and signage, or share your review page link in campaigns.`}
+            {`Your review system is ready to go. Your Master QR is attached to this email — print it for your store, menus, or signage.`}
           </Text>
           <Text
             style={{
@@ -57,7 +59,24 @@ export function WelcomeEmail({
               color: "#18181b",
             }}
           >
-            {`Tip for ${owner}: bookmark your review page so you can share it in campaigns, receipts, and table tents alongside your printed Master QR.`}
+            {`You can also share your review page link anytime. We're cheering you on as you start collecting great feedback.`}
+          </Text>
+          <Text
+            style={{
+              margin: extraMessage ? "0 0 12px" : 0,
+              fontSize: "15px",
+              lineHeight: "1.65",
+              color: "#18181b",
+            }}
+          >
+            {"Questions? Email us anytime at "}
+            <Link
+              href={`mailto:${SUPPORT_EMAIL}`}
+              style={{ color: brand.primaryColor, textDecoration: "underline" }}
+            >
+              {SUPPORT_EMAIL}
+            </Link>
+            {" — we're happy to help."}
           </Text>
           {extraMessage ? (
             <Text

@@ -1,19 +1,22 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { AdminSidebar } from "@/components/admin/admin-sidebar";
 import { AdminTopbar } from "@/components/admin/admin-topbar";
 
 export function AdminShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(() => {
-    if (typeof window === "undefined") return false;
+  const [desktopSidebarCollapsed, setDesktopSidebarCollapsed] = useState(false);
+
+  useLayoutEffect(() => {
     try {
-      return window.localStorage.getItem("admin:sidebar:collapsed") === "1";
+      setDesktopSidebarCollapsed(
+        window.localStorage.getItem("admin:sidebar:collapsed") === "1",
+      );
     } catch {
-      return false;
+      /* ignore */
     }
-  });
+  }, []);
 
   useEffect(() => {
     try {

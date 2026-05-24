@@ -164,6 +164,14 @@ export async function sendAppEmail(params: SendAppEmailParams) {
         ...(params.attachments?.length ? { attachments: params.attachments } : {}),
       };
 
+  emailFlowInfo("resend_api_call_start", {
+    eventTrigger,
+    templateType,
+    correlationId: params.correlationId ?? null,
+    attachmentCount: params.attachments?.length ?? 0,
+    usedRenderFallback,
+  });
+
   const { data, error } = await resend.emails.send(
     sendPayload as Parameters<Resend["emails"]["send"]>[0],
   );

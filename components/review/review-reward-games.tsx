@@ -7,6 +7,10 @@ import { playRewardWinConfetti } from "@/lib/review/review-confetti";
 import { RewardScratchGame } from "@/components/review/rewards/reward-scratch-game";
 import { RewardSpinWheel } from "@/components/review/rewards/reward-spin-wheel";
 import { useBodyScrollLock } from "@/lib/hooks/use-body-scroll-lock";
+import {
+  rewardPendingScratchKey,
+  rewardUsedStorageKey,
+} from "@/lib/review/review-reward-storage-keys";
 import Image from "next/image";
 
 type Props = {
@@ -14,6 +18,10 @@ type Props = {
   spinEnabled: boolean;
   scratchEnabled: boolean;
   rewardConfig: string[];
+  /** User opened a reward game — cancel any pending session exit timer. */
+  onRewardPlayStart?: () => void;
+  /** Reward result shown (parent may schedule exit only if review already completed). */
+  onRewardSessionComplete?: () => void;
 };
 
 type Phase = "closed" | "loading" | "playing" | "result" | "error";
@@ -34,6 +42,8 @@ export function ReviewRewardGames({
   spinEnabled,
   scratchEnabled,
   rewardConfig,
+  onRewardPlayStart,
+  onRewardSessionComplete,
 }: Props) {
   const t = useReviewT();
   const titleId = useId();
@@ -57,6 +67,7 @@ export function ReviewRewardGames({
   const celebrationFired = useRef(false);
   const scratchRevealCommitted = useRef(false);
   const closeBtnRef = useRef<HTMLButtonElement>(null);
+  const claimInFlightRef = useRef(false);
 
   useBodyScrollLock(phase !== "closed");
 
@@ -121,6 +132,11 @@ export function ReviewRewardGames({
     fireWinCelebration(prize);
   }, [phase, prize, fireWinCelebration]);
 
+  useEffect(() => {
+    if (phase !== "result" || !prize) return;
+    onRewardSessionComplete?.();
+  }, [phase, prize, onRewardSessionComplete]);
+
   const onSpinAnimationDone = useCallback(() => {
     setPhase("result");
   }, []);
@@ -139,15 +155,17 @@ export function ReviewRewardGames({
   if (!spinEnabled && !scratchEnabled) return null;
 
   const beginGame = async (kind: "spin" | "scratch") => {
-    if (isClaiming) return;
+    if (claimInFlightRef.current || isClaiming) return;
     if (kind === "spin" && spinUsed) return;
     if (kind === "scratch" && scratchUsed) return;
+    claimInFlightRef.current = true;
     setIsClaiming(true);
     setClaimError(null);
     setPrize(null);
     setWheelRewards([]);
     setGameKind(kind);
     setPhase("loading");
+    onRewardPlayStart?.();
     try {
       let res: Awaited<ReturnType<typeof postPublicRewardClaim>>;
       if (kind === "scratch") {
@@ -171,6 +189,7 @@ export function ReviewRewardGames({
       setClaimError(e instanceof Error ? e.message : t("rewards.errorGeneric"));
       setPhase("error");
     } finally {
+      claimInFlightRef.current = false;
       setIsClaiming(false);
     }
   };
@@ -382,13 +401,13 @@ export function ReviewRewardGames({
 }
 
 function storageKey(id: string, kind: "spin" | "scratch"): string {
-  return `reward:${kind}:${id}`;
+  return rewardUsedStorageKey(id, kind);
 }
 
 function isUsed(id: string, kind: "spin" | "scratch"): boolean {
   if (typeof window === "undefined") return false;
   try {
-    return localStorage.getItem(storageKey(id, kind)) === "1";
+    return sessionStorage.getItem(storageKey(id, kind)) === "1";
   } catch {
     return false;
   }
@@ -397,7 +416,7 @@ function isUsed(id: string, kind: "spin" | "scratch"): boolean {
 function markUsed(id: string, kind: "spin" | "scratch") {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(storageKey(id, kind), "1");
+    sessionStorage.setItem(storageKey(id, kind), "1");
   } catch {
     /* ignore */
   }
@@ -410,7 +429,7 @@ type PendingScratchClaim = {
 };
 
 function pendingScratchKey(id: string): string {
-  return `reward:scratch:pending:${id}`;
+  return rewardPendingScratchKey(id);
 }
 
 function readPendingScratch(id: string): PendingScratchClaim | null {

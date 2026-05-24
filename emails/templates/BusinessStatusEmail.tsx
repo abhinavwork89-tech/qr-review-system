@@ -1,22 +1,42 @@
-import { Text } from "@react-email/components";
+import { Link, Text } from "@react-email/components";
 import { MasterEmailLayout } from "@/emails/MasterEmailLayout";
 import type { EmailBrandContext } from "@/emails/types";
+
+const SUPPORT_EMAIL = "team@onecoreapp.com";
 
 export type BusinessStatusEmailProps = EmailBrandContext & {
   previewText?: string;
   status: "active" | "inactive";
-  dashboardUrl?: string;
-  ctaText?: string;
   title?: string;
   greeting?: string;
   note?: string;
 };
 
+function SupportLine({ primaryColor }: { primaryColor: string }) {
+  return (
+    <Text
+      style={{
+        margin: 0,
+        fontSize: "15px",
+        lineHeight: "1.65",
+        color: "#18181b",
+      }}
+    >
+      {"If you need anything, email us at "}
+      <Link
+        href={`mailto:${SUPPORT_EMAIL}`}
+        style={{ color: primaryColor, textDecoration: "underline" }}
+      >
+        {SUPPORT_EMAIL}
+      </Link>
+      {" — we're here to help."}
+    </Text>
+  );
+}
+
 export function BusinessStatusEmail({
   previewText,
   status,
-  dashboardUrl,
-  ctaText,
   title,
   greeting,
   note,
@@ -25,7 +45,6 @@ export function BusinessStatusEmail({
   const displayBrand = brand.brandName.trim() || "your business";
   const owner = brand.ownerFullName.trim() || "there";
   const isActive = status === "active";
-  const showCta = Boolean(dashboardUrl?.trim());
 
   return (
     <MasterEmailLayout
@@ -33,20 +52,18 @@ export function BusinessStatusEmail({
       previewText={
         previewText ??
         (isActive
-          ? `${displayBrand} is active`
-          : `${displayBrand} is inactive`)
+          ? `Good news — ${displayBrand} is active again`
+          : `We're here when you're ready — ${displayBrand}`)
       }
       title={
         title ??
-        (isActive
-          ? `${displayBrand} is active`
-          : `${displayBrand} is currently inactive`)
+        (isActive ? "Welcome back!" : "We're here for you")
       }
       greeting={
         greeting ??
         (isActive
-          ? `Hi ${owner}, ${displayBrand} is now marked active in One Core App.`
-          : `Hi ${owner}, ${displayBrand} has been marked inactive in One Core App.`)
+          ? `Hi ${owner}, we're happy to have you with us again.`
+          : `Hi ${owner}, we're sorry to see that ${displayBrand} is currently inactive.`)
       }
       mainMessage={
         <>
@@ -59,8 +76,8 @@ export function BusinessStatusEmail({
             }}
           >
             {isActive
-              ? `Customers can reach your review page and QR destinations again. It is a good moment to spot-check links and printed materials for ${displayBrand}.`
-              : `While inactive, customers may see an unavailable state when scanning your QR codes or visiting your review entry points. Reactivate ${displayBrand} when you are ready to resume collecting feedback.`}
+              ? `Your review page and QR codes are active now. Customers can scan your QR and leave reviews just like before.`
+              : `Your review page and QR codes are on pause for now. When you're ready to come back, we'd love to help you get started again.`}
           </Text>
           {note?.trim() ? (
             <Text
@@ -74,20 +91,32 @@ export function BusinessStatusEmail({
               {note.trim()}
             </Text>
           ) : null}
-          <Text
-            style={{
-              margin: 0,
-              fontSize: "15px",
-              lineHeight: "1.65",
-              color: "#18181b",
-            }}
-          >
-            {`If this change was unexpected, ${owner}, sign in and review your business settings or contact support.`}
-          </Text>
+          {isActive ? (
+            <Text
+              style={{
+                margin: "0 0 12px",
+                fontSize: "15px",
+                lineHeight: "1.65",
+                color: "#18181b",
+              }}
+            >
+              Thank you for continuing with One Core App.
+            </Text>
+          ) : (
+            <Text
+              style={{
+                margin: "0 0 12px",
+                fontSize: "15px",
+                lineHeight: "1.65",
+                color: "#18181b",
+              }}
+            >
+              We would love to help you reconnect whenever the time is right.
+            </Text>
+          )}
+          <SupportLine primaryColor={brand.primaryColor} />
         </>
       }
-      ctaText={showCta ? ctaText ?? "Open dashboard" : undefined}
-      ctaUrl={showCta ? dashboardUrl : undefined}
     />
   );
 }

@@ -121,8 +121,6 @@ export async function sendPlanRenewedEmail(
 export async function sendBusinessStatusEmail(
   props: BrandFields & {
     status: "active" | "inactive";
-    dashboardUrl?: string;
-    ctaText?: string;
     note?: string;
     subject?: string;
   },
@@ -142,8 +140,8 @@ export async function sendBusinessStatusEmail(
   const subject =
     props.subject?.trim() ??
     (props.status === "active"
-      ? `${brandName} is active`
-      : `${brandName} is inactive`);
+      ? `Welcome back — ${brandName} is active`
+      : `We're here when you're ready — ${brandName}`);
   return sendAppEmail({
     to: recipient,
     subject,
@@ -159,8 +157,6 @@ export async function sendBusinessStatusEmail(
       brandName,
       footerCopyrightYear: settings.copyrightYear,
       status: props.status,
-      dashboardUrl: props.dashboardUrl,
-      ctaText: props.ctaText,
       note: props.note,
     }),
   });

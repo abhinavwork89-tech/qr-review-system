@@ -1,5 +1,6 @@
 "use client";
 
+import { beginAppNavigation } from "@/lib/navigation/app-navigation-loader";
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { Loader2, Trash2 } from "lucide-react";
@@ -52,6 +53,7 @@ export function DeleteBusinessButton({
       }
 
       setOpen(false);
+      beginAppNavigation();
       startTransition(() => {
         router.replace(redirectTo);
         router.refresh();

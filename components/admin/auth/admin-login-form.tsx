@@ -1,5 +1,6 @@
 ﻿"use client";
 
+import { beginAppNavigation } from "@/lib/navigation/app-navigation-loader";
 import { useRouter } from "next/navigation";
 import { useRef, useState } from "react";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
@@ -60,6 +61,7 @@ export function AdminLoginForm() {
         // ignore storage failures
       }
 
+      beginAppNavigation();
       router.replace("/admin/dashboard");
       router.refresh();
     } catch (err) {

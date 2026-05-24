@@ -2,7 +2,7 @@ import { WelcomeEmail } from "@/emails/templates/WelcomeEmail";
 import type { QrImageAsset } from "@/emails/types";
 import type { WelcomeEmailQrAttachment } from "@/lib/email/welcome-master-qr";
 import { getAppSettingsPublic } from "@/lib/data/app-settings";
-import { emailFlowWarn } from "@/lib/email/email-flow-log";
+import { emailFlowInfo, emailFlowWarn } from "@/lib/email/email-flow-log";
 import { resolveBusinessRecipient } from "@/lib/email/resolve-recipient";
 import { sanitizePrimaryColor } from "@/lib/email/sanitize-primary-color";
 import { sendAppEmail } from "@/lib/email/send-app-email";
@@ -29,6 +29,13 @@ export type SendWelcomeEmailInput = {
 };
 
 export async function sendWelcomeEmail(input: SendWelcomeEmailInput) {
+  emailFlowInfo("welcome_email_send_enter", {
+    eventTrigger: "welcome",
+    correlationId: input.businessId ?? null,
+    attachmentCount: input.qrAttachments?.length ?? 0,
+    businessEmailPresent: Boolean(input.businessEmail?.trim()),
+  });
+
   const recipient = resolveBusinessRecipient(input.businessEmail);
   if (!recipient) {
     emailFlowWarn("send_skipped_no_recipient", {
@@ -46,7 +53,7 @@ export async function sendWelcomeEmail(input: SendWelcomeEmailInput) {
   const year = settings.copyrightYear;
 
   const brandName = input.brandName.trim() || "Your business";
-  const subject = input.subject?.trim() || `Welcome to ${brandName} on One Core App`;
+  const subject = input.subject?.trim() || `Welcome to One Core App, ${brandName}!`;
 
   return sendAppEmail({
     to: recipient,
@@ -78,7 +85,7 @@ export async function sendWelcomeEmail(input: SendWelcomeEmailInput) {
         qrSectionHint={
           input.qrAttachments && input.qrAttachments.length > 0
             ? (input.qrAttachmentHint?.trim() ||
-              "Your high-quality business QR code is attached to this email and ready for print or download. Open the attachment to print table tents, stickers, or storefront signage.")
+              "Your Master QR is attached to this email. Open the file to print it on table tents, stickers, or signage.")
             : undefined
         }
         previewText={input.previewText}

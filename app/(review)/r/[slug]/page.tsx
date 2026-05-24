@@ -1,5 +1,4 @@
 import type { Metadata } from "next";
-import { redirect } from "next/navigation";
 import { ActiveReviewView } from "@/components/review/active-review-view";
 import { InactiveBusinessView } from "@/components/review/inactive-business-view";
 import {
@@ -91,16 +90,9 @@ export default async function ReviewPage({ params }: PageProps) {
       publicOrigin,
       storedMasterQrType: result.business.master_qr_type ?? null,
       effectiveMasterQrType: display.masterQrType,
-      directRedirectRaw: result.business.direct_redirect,
-      directRedirectResolved: display.directRedirect,
       masterOutboundUrl: display.masterOutboundUrl,
-      directOutboundFromReviewPage: display.directOutboundFromReviewPage,
       masterQrUrl: display.masterQrUrl,
     });
-  }
-
-  if (display.directOutboundFromReviewPage) {
-    redirect(display.masterOutboundUrl);
   }
 
   return <ActiveReviewView slug={slug} display={display} />;
