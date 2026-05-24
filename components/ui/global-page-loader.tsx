@@ -1,76 +1,54 @@
 "use client";
 
+import {
+  beginAppNavigation,
+  clearAppNavigation,
+  isAppNavigationPending,
+  subscribeAppNavigation,
+} from "@/lib/navigation/app-navigation-loader";
 import { usePathname, useSearchParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 
-/** Background fetches that already show inline loading UI (e.g. AI suggestion skeletons). */
-const GLOBAL_LOADER_EXEMPT_FETCH_PATHS = new Set(["/api/ai/generate-review"]);
+function subscribeNavigationPending(onStoreChange: () => void) {
+  return subscribeAppNavigation(onStoreChange);
+}
 
-function isGlobalLoaderExemptFetch(input: RequestInfo | URL): boolean {
-  try {
-    let pathname: string;
-    if (typeof input === "string") {
-      const url = input.startsWith("http")
-        ? new URL(input)
-        : new URL(input, window.location.origin);
-      pathname = url.pathname;
-    } else if (input instanceof URL) {
-      pathname = input.pathname;
-    } else if (input instanceof Request) {
-      pathname = new URL(input.url, window.location.origin).pathname;
-    } else {
-      return false;
-    }
-    return GLOBAL_LOADER_EXEMPT_FETCH_PATHS.has(pathname);
-  } catch {
-    return false;
-  }
+function getNavigationPendingSnapshot() {
+  return isAppNavigationPending();
+}
+
+function getNavigationPendingServerSnapshot() {
+  return false;
 }
 
 export function GlobalPageLoader() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [visible, setVisible] = useState(false);
-  const inFlightRef = useRef(0);
-  const navPendingRef = useRef(false);
+  const navPending = useSyncExternalStore(
+    subscribeNavigationPending,
+    getNavigationPendingSnapshot,
+    getNavigationPendingServerSnapshot,
+  );
+
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    if (!navPendingRef.current) return;
-    navPendingRef.current = false;
-    if (inFlightRef.current === 0) {
-      setVisible(false);
-    }
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    clearAppNavigation();
   }, [pathname, searchParams]);
 
   useEffect(() => {
-    const originalFetch = window.fetch.bind(window);
-
-    const sync = () => {
-      setVisible(navPendingRef.current || inFlightRef.current > 0);
+    const onPopState = () => {
+      beginAppNavigation();
     };
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, []);
 
-    window.fetch = (async (...args: Parameters<typeof fetch>) => {
-      const skipLoader = isGlobalLoaderExemptFetch(args[0]);
-      if (!skipLoader) {
-        inFlightRef.current += 1;
-        sync();
-      }
-      try {
-        return await originalFetch(...args);
-      } finally {
-        if (!skipLoader) {
-          inFlightRef.current = Math.max(0, inFlightRef.current - 1);
-          // Submit / click can set navPending expecting a route change. If no navigation
-          // happens (e.g. login error on same URL), pathname never updates — clear pending
-          // once all wrapped fetches finish so the overlay cannot stick forever.
-          if (inFlightRef.current === 0) {
-            navPendingRef.current = false;
-          }
-          sync();
-        }
-      }
-    }) as typeof window.fetch;
-
+  useEffect(() => {
     const onDocumentClick = (event: MouseEvent) => {
       if (event.defaultPrevented) return;
       if (event.button !== 0) return;
@@ -95,25 +73,17 @@ export function GlobalPageLoader() {
       }
 
       if (nextUrl.origin !== window.location.origin) return;
-      if (
-        nextUrl.pathname === window.location.pathname &&
-        nextUrl.search === window.location.search &&
-        nextUrl.hash === window.location.hash
-      ) {
-        return;
-      }
+      if (nextUrl.pathname === window.location.pathname) return;
 
-      navPendingRef.current = true;
-      sync();
+      beginAppNavigation();
     };
 
     document.addEventListener("click", onDocumentClick, true);
-
-    return () => {
-      window.fetch = originalFetch;
-      document.removeEventListener("click", onDocumentClick, true);
-    };
+    return () => document.removeEventListener("click", onDocumentClick, true);
   }, []);
+
+  const visible =
+    navPending || (!mounted && (pathname === "/admin" || pathname.startsWith("/admin/")));
 
   if (!visible) return null;
 

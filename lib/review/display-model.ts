@@ -9,7 +9,6 @@ import type {
 import { mergeWhatsAppUrlIntoChannels } from "@/lib/whatsapp/wa-me";
 import { buildPublicReviewQrUrl } from "@/lib/qr/qr-urls";
 import { scanTrackingPublicOrigin } from "@/lib/scan/build-tracked-out-url";
-import { isSafeHttpUrl } from "@/lib/review/business-config";
 import {
   buildMasterQrAbsoluteUrl,
   formatMasterQrTargetLabel,
@@ -22,7 +21,6 @@ import { parsePublicResourceUrls } from "@/lib/review/parse-resource-urls";
 import { normalizeReviewLocale } from "@/lib/i18n/review-locale";
 import {
   computeDefaultMasterQrType,
-  masterScanDestinationsMatch,
   normalizeMasterQrType,
   type MasterQrType,
 } from "@/lib/scan/master-qr";
@@ -48,7 +46,6 @@ export type ReviewDisplayModel = {
   language: string;
   googleReviewUrl: string;
   threshold: number;
-  directRedirect: boolean;
   allowLowRatingRedirect: boolean;
   customerCareNumber: string | null;
   /** Tracked `tel:` href from Call channel when enabled + valid; takes precedence over legacy customer care. */
@@ -70,11 +67,6 @@ export type ReviewDisplayModel = {
   masterQrUrl: string;
   /** Fixed public review QR: `{origin}/r/{slug}`. */
   publicReviewQrUrl: string;
-  /**
-   * When true, `/r/[slug]` redirects directly to the resolved master target destination
-   * (no `/api/scan/out` on the review page load).
-   */
-  directOutboundFromReviewPage: boolean;
   /** Resolved master target destination URL (direct redirect, not tracked). */
   masterOutboundUrl: string;
   /** When true, public review page may call POST /api/ai/generate-review (server-gated). */
@@ -264,10 +256,6 @@ export function activeBusinessToDisplay(
   const masterQrUrl = buildMasterQrAbsoluteUrl(origin, business.id);
   const masterOutbound =
     resolveMasterQrTargetDestination(targetCtx, origin) ?? reviewBase;
-  const directOutboundFromReviewPage =
-    business.direct_redirect === true &&
-    isSafeHttpUrl(masterOutbound) &&
-    !masterScanDestinationsMatch(masterOutbound, reviewBase);
   const effectiveMasterType =
     normalizeMasterQrType(business.master_qr_type) ??
     computeDefaultMasterQrType({
@@ -279,9 +267,7 @@ export function activeBusinessToDisplay(
   const brandName =
     business.brand_name?.trim() || business.name?.trim() || "Business";
   const googleReviewUrl = business.google_url?.trim() ?? "";
-  const aiGenerateLanguage = normalizeAiReviewLanguage(
-    business.ai_review_language ?? business.language,
-  );
+  const aiGenerateLanguage = normalizeAiReviewLanguage(business.ai_review_language);
   const aiSuggestionCount = effectiveBusinessSuggestionsCount(business);
   return {
     businessId: business.id,
@@ -295,7 +281,6 @@ export function activeBusinessToDisplay(
     language: normalizeReviewLocale(business.language ?? "en"),
     googleReviewUrl,
     threshold: normalizeThreshold(business.threshold),
-    directRedirect: business.direct_redirect === true,
     allowLowRatingRedirect: business.allow_low_rating_redirect === true,
     customerCareNumber: business.customer_care_number?.trim() || null,
     callTelHref: buildCallTelHref(
@@ -313,7 +298,6 @@ export function activeBusinessToDisplay(
     masterQrUrl,
     masterQrTrackUrl: masterQrUrl,
     publicReviewQrUrl: reviewBase,
-    directOutboundFromReviewPage,
     masterOutboundUrl: masterOutbound,
     resourceUrls: parsePublicResourceUrls(business.resource_urls),
     aiReviewGenerationEnabled: computePublicAiReviewGenerationEnabled(

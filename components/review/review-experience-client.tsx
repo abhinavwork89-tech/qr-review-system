@@ -1,6 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
+import { useCallback, useRef } from "react";
 import { BannerSlider } from "@/components/banner-slider";
 import { BusinessBrandHeader } from "@/components/review/business-brand-header";
 import {
@@ -17,6 +18,7 @@ import { ReviewLanguageSwitcher } from "@/components/review/review-language-swit
 import { ReviewPageFooter } from "@/components/review/review-page-footer";
 import { ReviewRatingPlaceholder } from "@/components/review/review-rating-placeholder";
 import { ScanTracker } from "@/components/review/scan-tracker";
+import { useReviewSessionExit } from "@/components/review/use-review-session-exit";
 import type { AppSettingsPublic } from "@/lib/data/app-settings";
 import type { BannerSlide } from "@/components/banner-slider";
 import type { ReviewDisplayModel } from "@/lib/review/display-model";
@@ -50,6 +52,27 @@ export function ReviewExperienceClient({
   settings: AppSettingsPublic;
 }) {
   const switcher: ReactNode = <ReviewLanguageSwitcher />;
+  const { scheduleExit, cancelScheduledExit } = useReviewSessionExit(
+    display.businessId,
+  );
+
+  /** Marketing redirect runs only after review thank-you / completion. */
+  const reviewCompletedRef = useRef(false);
+
+  const onReviewSessionComplete = useCallback(() => {
+    reviewCompletedRef.current = true;
+    scheduleExit();
+  }, [scheduleExit]);
+
+  const onRewardPlayStart = useCallback(() => {
+    cancelScheduledExit();
+  }, [cancelScheduledExit]);
+
+  /** After reward result — redirect only if review flow already finished. */
+  const onRewardSessionComplete = useCallback(() => {
+    if (!reviewCompletedRef.current) return;
+    scheduleExit();
+  }, [scheduleExit]);
 
   return (
     <ReviewI18nProvider businessDefaultLocale={display.language} slug={slug}>
@@ -63,7 +86,6 @@ export function ReviewExperienceClient({
       <ReviewDelayedModalLazy
         googleReviewUrl={display.googleReviewUrl}
         channels={display.channels}
-        directRedirect={display.directRedirect}
         pageSlug={slug}
       />
 
@@ -93,6 +115,8 @@ export function ReviewExperienceClient({
               spinEnabled={display.spinEnabled}
               scratchEnabled={display.scratchEnabled}
               rewardConfig={display.rewardConfig}
+              onRewardPlayStart={onRewardPlayStart}
+              onRewardSessionComplete={onRewardSessionComplete}
             />
           </section>
 
@@ -101,13 +125,13 @@ export function ReviewExperienceClient({
               businessId={display.businessId}
               googleReviewUrl={display.googleReviewUrl}
               threshold={display.threshold}
-              directRedirect={display.directRedirect}
-              skipPreferredAutoRedirect={display.directOutboundFromReviewPage}
               allowLowRatingRedirect={display.allowLowRatingRedirect}
               channels={display.channels}
               aiReviewGenerationEnabled={display.aiReviewGenerationEnabled}
               aiGenerateLanguage={display.aiGenerateLanguage}
               aiSuggestionCount={display.aiSuggestionCount}
+              brandName={display.brandName}
+              onReviewSessionComplete={onReviewSessionComplete}
             />
           </section>
         </div>

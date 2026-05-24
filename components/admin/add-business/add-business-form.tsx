@@ -1,5 +1,6 @@
 "use client";
 
+import { beginAppNavigation } from "@/lib/navigation/app-navigation-loader";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { adminPanel } from "@/components/admin/admin-panel-styles";
@@ -315,7 +316,6 @@ type FormValues = {
   subscriptionPlan: string;
   googleReviewUrl: string;
   ratingThreshold: string;
-  directRedirect: boolean;
   allowLowRatingRedirect: boolean;
   spinEnabled: boolean;
   scratchEnabled: boolean;
@@ -358,7 +358,6 @@ const initialValues: FormValues = {
   subscriptionPlan: "free",
   googleReviewUrl: "",
   ratingThreshold: "4",
-  directRedirect: true,
   allowLowRatingRedirect: false,
   spinEnabled: false,
   scratchEnabled: false,
@@ -992,7 +991,7 @@ export function AddBusinessForm({
         plan_type: normalizedValues.subscriptionPlan,
         google_url: normalizedValues.googleReviewUrl,
         threshold: Number(normalizedValues.ratingThreshold),
-        direct_redirect: normalizedValues.directRedirect,
+        direct_redirect: false,
         allow_low_rating_redirect: normalizedValues.allowLowRatingRedirect,
         whatsapp_country_code: normalizedValues.whatsappEnabled
           ? normalizeDialCode(normalizedValues.whatsappCountryCode || DEFAULT_DIAL_CODE)
@@ -1126,6 +1125,7 @@ export function AddBusinessForm({
         setClientProfileFiles([]);
         setClientProfilePreviewUrls([]);
         setUploadErrors({});
+        beginAppNavigation();
         router.push("/admin/businesses");
         return;
       }
@@ -1142,6 +1142,7 @@ export function AddBusinessForm({
   };
 
   const handleCancel = () => {
+    beginAppNavigation();
     router.push("/admin/businesses");
   };
 
@@ -1650,13 +1651,6 @@ export function AddBusinessForm({
             ) : null}
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
-            <FormToggle
-              id="directRedirect"
-              label="Direct Redirect"
-              description="Send happy customers straight to Google Reviews."
-              checked={values.directRedirect}
-              onChange={patch("directRedirect")}
-            />
             <FormToggle
               id="allowLowRatingRedirect"
               label="Allow low rating redirect"

@@ -121,7 +121,6 @@ type DetailValues = {
   secondaryColor: string;
   googleUrl: string;
   threshold: string;
-  directRedirect: boolean;
   allowLowRatingRedirect: boolean;
   spinEnabled: boolean;
   scratchEnabled: boolean;
@@ -1125,13 +1124,6 @@ export function BusinessDetailEditor({
             Master target
           </span>
           <span className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{masterTargetLabel}</span>
-          {values.directRedirect ? (
-            <span className="text-xs font-medium text-emerald-700 dark:text-emerald-400">
-              Direct redirect on
-            </span>
-          ) : (
-            <span className="text-xs text-zinc-500 dark:text-zinc-400">Direct redirect off</span>
-          )}
         </div>
         <p className="mt-3 text-xs leading-relaxed text-zinc-500 dark:text-zinc-400">
           Master QR uses <code className="text-[11px]">/m/{"{businessId}"}</code> (dynamic). Client
@@ -1937,13 +1929,6 @@ export function BusinessDetailEditor({
           </div>
           <div className="grid gap-3 sm:grid-cols-2">
             <FormToggle
-              id="directRedirect"
-              label="Direct Redirect"
-              checked={values.directRedirect}
-              onChange={setField("directRedirect")}
-              disabled={!isEditing}
-            />
-            <FormToggle
               id="allowLowRatingRedirect"
               label="Allow Low Rating"
               checked={values.allowLowRatingRedirect}
@@ -2429,7 +2414,6 @@ type PatchPayload = {
   secondary_color: string;
   google_url: string;
   threshold: number;
-  direct_redirect: boolean;
   allow_low_rating_redirect: boolean;
   channels: DetailValues["channels"] & {
     spin_enabled: boolean;
@@ -2478,7 +2462,6 @@ function toPatchPayload(v: DetailValues): PatchPayload {
     secondary_color: v.secondaryColor,
     google_url: v.googleUrl,
     threshold: Number(v.threshold),
-    direct_redirect: v.directRedirect,
     allow_low_rating_redirect: v.allowLowRatingRedirect,
     whatsapp_country_code: normalizeDialCode(v.whatsappCountryCode || DEFAULT_DIAL_CODE),
     whatsapp_number: clampWhatsAppLocalInput(v.whatsappNumber),
@@ -2543,7 +2526,6 @@ function isPatchPayloadEqual(a: PatchPayload, b: PatchPayload): boolean {
     a.secondary_color !== b.secondary_color ||
     a.google_url !== b.google_url ||
     a.threshold !== b.threshold ||
-    a.direct_redirect !== b.direct_redirect ||
     a.allow_low_rating_redirect !== b.allow_low_rating_redirect ||
     a.whatsapp_country_code !== b.whatsapp_country_code ||
     a.whatsapp_number !== b.whatsapp_number ||
@@ -2598,7 +2580,6 @@ function buildPatchPayload(
   if (cur.secondary_color !== base.secondary_color) patch.secondary_color = cur.secondary_color;
   if (cur.google_url !== base.google_url) patch.google_url = cur.google_url;
   if (cur.threshold !== base.threshold) patch.threshold = cur.threshold;
-  if (cur.direct_redirect !== base.direct_redirect) patch.direct_redirect = cur.direct_redirect;
   if (cur.allow_low_rating_redirect !== base.allow_low_rating_redirect) {
     patch.allow_low_rating_redirect = cur.allow_low_rating_redirect;
   }

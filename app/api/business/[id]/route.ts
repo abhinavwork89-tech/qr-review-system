@@ -599,7 +599,7 @@ function parseBusinessPatchBody(body: unknown): ParseOk | ParseErr {
     }
   }
 
-  const boolFields = ["allow_low_rating_redirect", "direct_redirect"] as const;
+  const boolFields = ["allow_low_rating_redirect"] as const;
   for (const key of boolFields) {
     if (!(key in input)) continue;
     const value = input[key];

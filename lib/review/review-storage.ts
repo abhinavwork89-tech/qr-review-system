@@ -1,3 +1,5 @@
+import { safeRemoveLocalStorageItem } from "@/lib/storage/safe-client-storage";
+
 export const REVIEW_STORAGE_KEYS = {
   submitted: "review_submitted",
   snapshot: "review_flow_snapshot",
@@ -45,4 +47,12 @@ export function isReviewSubmittedFlag(): boolean {
 export function isGoogleReviewConfirmed(): boolean {
   if (typeof window === "undefined") return false;
   return localStorage.getItem(REVIEW_STORAGE_KEYS.googleConfirmed) === "true";
+}
+
+/** Removes persisted review-flow flags (does not clear reward keys — use review-session-cleanup). */
+export function clearReviewFlowStorage(): void {
+  if (typeof window === "undefined") return;
+  for (const key of Object.values(REVIEW_STORAGE_KEYS)) {
+    safeRemoveLocalStorageItem(key);
+  }
 }

@@ -1,7 +1,6 @@
 import { AI_ALLOWED_MODEL } from "@/lib/ai/constants";
 import type { AiReviewLanguage } from "@/lib/ai/constants";
 import { openaiPostJson } from "@/lib/ai/openai-provider";
-import { sanitizeReviewSuggestionList } from "@/lib/ai/review-gen-sanitize";
 
 export type ReviewGenOpenAiOk = {
   suggestions: string[];
@@ -10,6 +9,12 @@ export type ReviewGenOpenAiOk = {
 };
 
 export type ReviewGenOpenAiErr = { error: string };
+
+function languageLabel(language: AiReviewLanguage): string {
+  if (language === "hi") return "Hindi (Devanagari script only)";
+  if (language === "hinglish") return "Hinglish (Roman script, natural Hindi-English mix)";
+  return "English only";
+}
 
 function buildUserPrompt(input: {
   brandName: string;
@@ -20,9 +25,11 @@ function buildUserPrompt(input: {
 }): string {
   const brand = input.brandName.trim() || "the business";
   const bt = input.businessType.trim() || "business";
+  const langLabel = languageLabel(input.language);
   return [
     `Return ONLY valid JSON: {"suggestions":["..."]} with exactly ${input.count} string items.`,
-    `Each string: plain text, single line, ${80}–${220} characters, language=${input.language}.`,
+    `Each string: plain text, single line, ${80}–${220} characters.`,
+    `CRITICAL: Write every suggestion in ${langLabel}. Do not translate, mix languages, or follow the reader's UI locale.`,
     `Rating context: ${input.rating} stars (1–2 = honest/critical-leaning, 3 = balanced, 4–5 = clearly positive).`,
     `Business category (do not invent specific services or events): ${bt}.`,
     `Brand name for optional natural use in SOME lines only (not every line): ${brand}.`,
@@ -32,9 +39,16 @@ function buildUserPrompt(input: {
   ].join("\n");
 }
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(language: AiReviewLanguage): string {
+  const langRule =
+    language === "hi"
+      ? "Every suggestion must be written entirely in Hindi using Devanagari script. Never output English or Roman Hindi."
+      : language === "hinglish"
+        ? "Every suggestion must be written entirely in Hinglish using Roman script. Never output Devanagari or pure formal English."
+        : "Every suggestion must be written entirely in English. Never output Hindi, Hinglish, or mixed-language text.";
   return [
     "You help customers draft short public review lines.",
+    langRule,
     "You only output JSON as instructed. Never output markdown fences or explanations outside JSON.",
   ].join(" ");
 }
@@ -49,7 +63,8 @@ function parseUsage(data: unknown): { input: number; output: number } {
   return { input, output };
 }
 
-function parseSuggestionsJson(data: unknown, expected: number): string[] | null {
+/** Lenient parse: returns raw model strings; caller normalizes count and sanitization. */
+function parseSuggestionsJson(data: unknown): string[] | null {
   if (!data || typeof data !== "object") return null;
   const root = data as Record<string, unknown>;
   const choices = root.choices;
@@ -66,7 +81,11 @@ function parseSuggestionsJson(data: unknown, expected: number): string[] | null 
   if (!parsed || typeof parsed !== "object") return null;
   const suggestions = (parsed as { suggestions?: unknown }).suggestions;
   if (!Array.isArray(suggestions)) return null;
-  return sanitizeReviewSuggestionList(suggestions as unknown[], expected);
+  const out: string[] = [];
+  for (const item of suggestions) {
+    if (typeof item === "string" && item.trim()) out.push(item.trim());
+  }
+  return out.length > 0 ? out : null;
 }
 
 export async function generateReviewSuggestionsOpenAI(input: {
@@ -83,7 +102,7 @@ export async function generateReviewSuggestionsOpenAI(input: {
     max_tokens: 900,
     response_format: { type: "json_object" },
     messages: [
-      { role: "system", content: buildSystemPrompt() },
+      { role: "system", content: buildSystemPrompt(input.language) },
       { role: "user", content: buildUserPrompt(input) },
     ],
   };
@@ -101,7 +120,7 @@ export async function generateReviewSuggestionsOpenAI(input: {
     return { error: res.error };
   }
 
-  const suggestions = parseSuggestionsJson(res.data, input.count);
+  const suggestions = parseSuggestionsJson(res.data);
   if (!suggestions) {
     return { error: "malformed_model_output" };
   }
